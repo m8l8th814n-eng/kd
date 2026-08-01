@@ -1,5 +1,8 @@
 # kd like eza but without mess.
 
+![](./kd.png)
+![](./kd2.png)
+
 
 A directory lister in plain C. No dependencies beyond libc.
 
