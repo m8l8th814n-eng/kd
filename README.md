@@ -1,4 +1,5 @@
-# kd
+# kd like eza but without mess.
+
 
 A directory lister in plain C. No dependencies beyond libc.
 
