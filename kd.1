@@ -1,0 +1,163 @@
+.TH KD 1 "2026-08-01" "kd 0.1" "User Commands"
+.SH NAME
+kd \- list directory contents
+.SH SYNOPSIS
+.B kd
+.RI [ options ]
+.RI [ path .\|.\|.]
+.SH DESCRIPTION
+.B kd
+lists directory contents in columns, or in a long format with metadata.
+It is written in plain C and depends on nothing beyond libc.
+.PP
+With no
+.I path
+argument the current directory is listed.
+.PP
+Entries
+.B .
+and
+.B ..
+are never listed.
+.SH OPTIONS
+Short options may be clustered, so
+.B \-laG
+is equivalent to
+.B \-l \-a \-G .
+.TP
+.B \-l
+Long format: permissions, link count, owner, size, timestamp, name.
+.TP
+.BR \-a ", " \-A
+Include entries whose names begin with a dot.
+.TP
+.BR \-B ", " \-\-bytes
+Print sizes as raw byte counts instead of readable units.
+.TP
+.B \-D
+List directories only.
+.TP
+.BR \-g ", " \-\-group
+Show the group column. Off by default, as it usually repeats the owner.
+.TP
+.BR \-G ", " \-\-git
+Add a two-character git status column. Long format only.
+.TP
+.B \-m
+Page the output. See
+.B PAGER
+below.
+.TP
+.BR \-W ", " \-\-where
+Print full paths instead of bare names.
+.TP
+.BR \-T ", " \-\-tree
+Recursive tree view.
+.TP
+.B \-1
+One entry per line.
+.TP
+.B \-h
+Accepted and ignored. Readable sizes are already the default.
+.TP
+.BI \-\-color= when
+Colorize output.
+.I when
+is
+.BR auto ", " always ", or " never .
+Default is
+.BR auto ,
+which colorizes only when standard output is a terminal.
+.TP
+.B \-\-group\-directories\-first
+Sort directories before other entries.
+.TP
+.BR \-\-ls\-colors ", " \-\-no\-ls\-colors
+Take file name colors from the
+.B LS_COLORS
+environment variable, or do not. Off by default.
+.TP
+.B \-\-no\-pager
+Never page automatically.
+.PP
+.BR \-\-icons ", " \-\-no\-icons " and " \-\-sort
+are accepted and ignored, so that aliases written for
+.BR eza (1)
+keep working.
+.SH SIZES
+Sizes are decimal and roll up at 1000, except kilobytes, which hold until
+10000. A 1.5 MB file reads as
+.BR 1500K ,
+500 MB as
+.BR 500M ,
+and 1.2 GB as
+.BR 1.2G .
+A decimal is shown only when the mantissa is below 100.
+.SH SUMMARY ROW
+Long format ends with a summary line: the total size of the listed entries
+under the size column, and the current time under the timestamp column.
+.PP
+The total is the sum of
+.B st_size
+over the listed entries. It is not disk allocation and does not descend into
+subdirectories.
+.SH PAGER
+Long format pages itself when the listing does not fit on screen. A spinning
+character at the right edge of the prompt marks that
+.B kd
+made that decision rather than the user.
+.B \-m
+forces paging,
+.B \-\-no\-pager
+disables it.
+.PP
+The pager is built in. No external program is used, and color is preserved,
+which is not the case when piping to
+.BR more (1)
+or
+.BR less (1).
+.PP
+Keys:
+.B q
+quits,
+.B Enter
+advances one line, anything else advances one screen.
+.SH SYMLINKS
+Link targets are shown only in long format. In other modes a trailing
+.B @
+marks a link, which remains visible when output is piped and color is off.
+Unreachable targets are colored differently from reachable ones.
+.SH COLORS
+Colors are compiled in, defined as macros in
+.IR kf.h .
+Each macro holds the raw SGR parameter, so
+.B "34"
+is blue and an empty string means no color. Editing the header and rebuilding
+is the intended way to change the palette.
+.PP
+Colors stay within the base ANSI range, which resolves through the terminal
+palette, so the active theme determines the actual shades. Permissions are
+colored per character and the timestamp is split into day, month and time.
+.SH ENVIRONMENT
+.TP
+.B LS_COLORS
+Consulted for file name colors only when
+.B \-\-ls\-colors
+is given. Metadata columns always use the compiled-in palette.
+.TP
+.B LC_COLLATE
+Determines sort order where the C library supports collation. A musl build
+sorts by code point, as musl has no collation tables.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+An argument was not understood, or a path could not be read.
+.SH SEE ALSO
+.BR ls (1),
+.BR eza (1),
+.BR tree (1)
+.SH AUTHORS
+K3FF
