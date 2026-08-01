@@ -51,9 +51,9 @@ static void die(const char *m)
 
 static int when(const char *v)
 {
-	if (!v || !strcmp(v, "auto"))
+	if (!v || !strcmp(v, "auto") || !strcmp(v, "tty") || !strcmp(v, "if-tty"))
 		return isatty(1);
-	if (!strcmp(v, "always") || !strcmp(v, "yes"))
+	if (!strcmp(v, "always") || !strcmp(v, "yes") || !strcmp(v, "force"))
 		return 1;
 	return 0;
 }
