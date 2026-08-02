@@ -26,7 +26,8 @@ is equivalent to
 .B \-l \-a \-G .
 .TP
 .B \-l
-Long format: permissions, link count, owner, size, timestamp, name.
+Long format: permissions, link count, owner, size, timestamp, name. The
+listing opens with a header line and closes with a summary row.
 .TP
 .BR \-a ", " \-A
 Include entries whose names begin with a dot.
@@ -85,6 +86,12 @@ environment variable, or do not. Off by default.
 .BR \-\-ext\-colors ", " \-\-no\-ext\-colors
 Color file names by extension, or do not. On by default.
 .TP
+.BR \-\-header ", " \-\-no\-header
+Print the header line above a long listing, or do not. On by default.
+See
+.B HEADER
+below.
+.TP
 .B \-\-no\-pager
 Never page automatically.
 .PP
@@ -101,6 +108,41 @@ Sizes are decimal and roll up at 1000, except kilobytes, which hold until
 and 1.2 GB as
 .BR 1.2G .
 A decimal is shown only when the mantissa is below 100.
+.SH HEADER
+Long format opens with a header line: the absolute path of the directory
+being listed, as
+.BR pwd (1)
+would report it, bracketed and set apart by color, followed by the origin
+remote and the current branch when the directory is inside a git work tree.
+The path is abbreviated to
+.B ~
+under the home directory.
+.PP
+.EX
+[~/kd] \(bu github.com/user/kd \(bu main
+.EE
+.PP
+The remote is reduced to host, owner and repository, so both
+.B git@github.com:user/repo.git
+and
+.B https://github.com/user/repo.git
+show as
+.BR github.com/user/repo .
+With a detached
+.B HEAD
+the branch is replaced by the short commit hash, marked with a leading
+.BR @ .
+.PP
+The line is fitted to the terminal width by giving up the least useful part
+first: the host is dropped from the remote, then the remote entirely, then
+the branch. The path is never shortened. Determining the branch and remote
+runs
+.BR git (1)
+once or twice per listing; use
+.B \-\-no\-header
+to avoid that, or to keep the output of
+.B \-l
+purely tabular.
 .SH SUMMARY ROW
 Long format ends with a summary line: the total size of the listed entries
 under the size column, and the current time under the timestamp column.

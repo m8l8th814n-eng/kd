@@ -27,6 +27,12 @@
 #define KF_GIT_CLEAN	"2"
 #define KF_GIT_DIRTY	""
 
+#define KF_HEAD_PATH	"35"
+#define KF_HEAD_BRACKET	"32"
+#define KF_HEAD_REMOTE	"36"
+#define KF_HEAD_BRANCH	"32"
+#define KF_HEAD_SEP	"2"
+#define KF_HEAD_DETACH	"@"
 
 #define KF_DIR		"01;34"
 #define KF_LINK		"01;36"
@@ -39,6 +45,7 @@
 
 #define KF_USE_LS_COLORS 0
 #define KF_USE_EXT_COLORS 1
+#define KF_USE_HEADER 1
 
 /* Colors by file format. One macro per family, so retheming a whole
  * family is a single edit.

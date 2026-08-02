@@ -23,7 +23,7 @@
 static int o_long, o_all, o_bytes, o_dironly, o_tree, o_group, o_color, o_one, o_git,
 	   o_showgrp, o_lscolors = KF_USE_LS_COLORS, o_more, o_tty, termcols = 80,
 	   termrows = 24, o_nopager, o_abs,
-	   o_extcolors = KF_USE_EXT_COLORS;
+	   o_extcolors = KF_USE_EXT_COLORS, o_header = KF_USE_HEADER;
 
 static char curdir[4096], curcwd[4096];
 
@@ -512,6 +512,119 @@ static void normpath(char *p)
 	*w = 0;
 }
 
+static void abspath(const char *p, char *out, size_t sz)
+{
+	if (p[0] == '/')
+		snprintf(out, sz, "%s", p);
+	else if (!strcmp(p, "."))
+		snprintf(out, sz, "%s", curcwd);
+	else
+		snprintf(out, sz, "%s/%s", curcwd, p);
+	normpath(out);
+}
+
+static int gitcmd(char *const av[], char *out, size_t sz)
+{
+	FILE *f;
+
+	out[0] = 0;
+	f = gitopen(av);
+	if (!f)
+		return 0;
+	if (!fgets(out, (int)sz, f))
+		out[0] = 0;
+	gitclose(f);
+	out[strcspn(out, "\n")] = 0;
+	return out[0] != 0;
+}
+
+/* github.com/user/repo out of whatever form the remote is written in. */
+static void shorturl(char *u)
+{
+	char *p, *slash;
+	size_t l;
+
+	p = strstr(u, "://");
+	if (p)
+		memmove(u, p + 3, strlen(p + 3) + 1);
+	slash = strchr(u, '/');
+	p = strchr(u, '@');
+	if (p && (!slash || p < slash))
+		memmove(u, p + 1, strlen(p + 1) + 1);
+	p = strchr(u, ':');
+	if (p && p[1] && (p[1] < '0' || p[1] > '9'))
+		*p = '/';
+	l = strlen(u);
+	while (l && u[l - 1] == '/')
+		u[--l] = 0;
+	if (l > 4 && !strcmp(u + l - 4, ".git"))
+		u[l - 4] = 0;
+}
+
+/* Where you are, which repo it is, and which branch — one line, trimmed
+ * from the least useful end when the terminal is too narrow to hold it.
+ */
+static void header(const char *path)
+{
+	char *avbr[] = { "git", "-C", NULL, "symbolic-ref", "--short", "HEAD", NULL };
+	char *avsha[] = { "git", "-C", NULL, "rev-parse", "--short", "HEAD", NULL };
+	char *avurl[] = { "git", "-C", NULL, "config", "--get", "remote.origin.url", NULL };
+	char abs[KDPATH], url[512], br[128], sha[64], *disp = abs, *p;
+	const char *home;
+	size_t hl, need;
+
+	abspath(path, abs, sizeof abs);
+	home = getenv("HOME");
+	if (home && home[0] == '/' && home[1]) {
+		hl = strlen(home);
+		while (hl > 1 && home[hl - 1] == '/')
+			hl--;
+		if (!strncmp(abs, home, hl) && (!abs[hl] || abs[hl] == '/')) {
+			abs[hl - 1] = '~';
+			disp = abs + hl - 1;
+		}
+	}
+
+	avbr[2] = avsha[2] = avurl[2] = (char *)path;
+	if (!gitcmd(avbr, br, sizeof br) && gitcmd(avsha, sha, sizeof sha))
+		snprintf(br, sizeof br, "%s%s", KF_HEAD_DETACH, sha);
+	if (br[0]) {
+		gitcmd(avurl, url, sizeof url);
+		shorturl(url);
+	} else {
+		url[0] = 0;
+	}
+
+	need = strlen(disp) + 2 + (url[0] ? strlen(url) + 3 : 0) +
+	       (br[0] ? strlen(br) + 3 : 0);
+	if (need > (size_t)termcols && url[0]) {
+		p = strchr(url, '/');
+		if (p) {
+			need -= (size_t)(p + 1 - url);
+			memmove(url, p + 1, strlen(p + 1) + 1);
+		}
+	}
+	if (need > (size_t)termcols && url[0]) {
+		need -= strlen(url) + 3;
+		url[0] = 0;
+	}
+	if (need > (size_t)termcols && br[0])
+		br[0] = 0;
+
+	paint(KF_HEAD_BRACKET, "[");
+	paint(KF_HEAD_PATH, disp);
+	paint(KF_HEAD_BRACKET, "]");
+	if (url[0]) {
+		paint(KF_HEAD_SEP, " · ");
+		paint(KF_HEAD_REMOTE, url);
+	}
+	if (br[0]) {
+		paint(KF_HEAD_SEP, " · ");
+		paint(KF_HEAD_BRANCH, br);
+	}
+	endline();
+}
+
 static void dispname(const struct ent *e, char *out, size_t sz)
 {
 	const char *d = curdir;
@@ -758,6 +871,10 @@ static void longopt(char *a)
 		o_extcolors = 1;
 	else if (kl == 13 && !strncmp(k, "no-ext-colors", 13))
 		o_extcolors = 0;
+	else if (kl == 6 && !strncmp(k, "header", 6))
+		o_header = 1;
+	else if (kl == 9 && !strncmp(k, "no-header", 9))
+		o_header = 0;
 	else if (kl == 5 && !strncmp(k, "color", 5))
 		o_color = when(v);
 	else if (kl == 23 && !strncmp(k, "group-directories-first", 23))
@@ -775,7 +892,7 @@ static void longopt(char *a)
 int main(int argc, char **argv)
 {
 	char *paths[256];
-	int np = 0, i;
+	int np = 0, i, hdr;
 	char *a, *p;
 	struct winsize ws;
 	struct stat st;
@@ -832,8 +949,12 @@ int main(int argc, char **argv)
 			fprintf(stderr, "kd: %s: not found\n", paths[i]);
 			continue;
 		}
-		if (np > 1)
-			printf("%s%s:\n", i ? "\n" : "", paths[i]);
+		if (np > 1) {
+			if (i)
+				putchar('\n');
+			if (!(o_long && o_header && S_ISDIR(st.st_mode)))
+				printf("%s:\n", paths[i]);
+		}
 		if (!S_ISDIR(st.st_mode)) {
 			snprintf(curdir, sizeof curdir, ".");
 			e.name = paths[i];
@@ -855,8 +976,9 @@ int main(int argc, char **argv)
 		if (!v)
 			continue;
 		snprintf(curdir, sizeof curdir, "%s", paths[i]);
+		hdr = o_long && o_header;
 		if (o_long && o_tty && !pgtty && !o_nopager &&
-		    n + 1 >= (size_t)termrows) {
+		    n + 1 + (size_t)hdr >= (size_t)termrows) {
 			o_more = 1;
 			pgauto = 1;
 			pginit();
@@ -864,8 +986,10 @@ int main(int argc, char **argv)
 		if (o_git && o_long)
 			gitload(paths[i]);
 		if (o_long) {
-			pgtotal = n + 1;
+			pgtotal = n + 1 + (size_t)hdr;
 			pgline = 0;
+			if (hdr)
+				header(paths[i]);
 			total = 0;
 			for (j = 0; j < n; j++) {
 				longline(&v[j]);

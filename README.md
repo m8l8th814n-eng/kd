@@ -53,6 +53,24 @@ are accepted and ignored so that aliases copied from eza keep working.
 which hold until 10000. So 1.5 MB reads as `1500K`, half a gigabyte as `500M`,
 and 1.2 GB as `1.2G`.
 
+**Long mode opens with a header row**: where you are, and which repo you are
+in.
+
+```
+[~/kd] · github.com/user/kd · main
+```
+
+The path is what `pwd` would print, shortened to `~` under your home
+directory, in purple inside green brackets. The remote is reduced to host, owner and repo, so
+`git@github.com:user/kd.git` and `https://github.com/user/kd.git` both read
+alike. A detached HEAD shows the short hash as `@8b5b306` instead of a branch
+name. Outside a work tree the line is just the path.
+
+When the terminal is too narrow, the line gives up its least useful part
+first: the host, then the whole remote, then the branch. The path is never
+shortened. This costs one or two `git` invocations per long listing;
+`--no-header` skips both.
+
 **Long mode ends with a summary row**: the total size of everything listed,
 under the size column, and the current time under the time column.
 
