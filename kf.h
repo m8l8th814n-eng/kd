@@ -2,7 +2,6 @@
 #define KF_H
 
 #define KF_P_DASH	"30"
-#define KF_P_DIR	"90"
 #define KF_P_READ	""
 #define KF_P_WRITE	"37"
 #define KF_P_EXEC	"94"
@@ -24,14 +23,19 @@
 #define KF_SPIN_FRAMES	"|/-\\"
 #define KF_SPIN_COLORS	{ "36", "32", "33", "35" }
 
-#define KF_GIT_CLEAN	"2"
-#define KF_GIT_DIRTY	""
+#define KF_GIT_DIRTY	"32"
+#define KF_GIT_MSG	KF_SIZE
+#define KF_MSG_WIDTH	45
+#define KF_MSG_MIN	8
+#define KF_MSG_CUT	"…"
+#define KF_AGE		KF_TIME
+#define KF_AGE_WIDTH	14
 
 #define KF_HEAD_PATH	"35"
-#define KF_HEAD_BRACKET	"32"
 #define KF_HEAD_REMOTE	"36"
 #define KF_HEAD_BRANCH	"32"
-#define KF_HEAD_SEP	"2"
+#define KF_HEAD_SEP	"32"
+#define KF_HEAD_JOIN	":"
 #define KF_HEAD_DETACH	"@"
 
 #define KF_DIR		"01;34"

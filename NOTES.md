@@ -13,11 +13,13 @@ alias ls "kd -l"
 
 Short flags cluster (`-lha`). Supported: `-l` long, `-a`/`-A` hidden files,
 `-h` no-op, `-B` raw bytes, `-D` directories only, `-g` show group, `-G` git
-status, `-m` pager, `-W` full path, `-T` tree, `-1` one per line.
+status and commit subject, `-s`/`-S` short long-format, `-m` pager, `-W` full path,
+`-T` tree, `-1` one per line.
 
-Long flags: `--tree`, `--git`, `--bytes`, `--group`,
+Long flags: `--tree`, `--git`, `--short`, `--bytes`, `--group`,
 `--color[=auto|always|never]`, `--group-directories-first`, `--ls-colors`,
-`--no-ls-colors`, `--no-pager`, `--where`.
+`--no-ls-colors`, `--ext-colors`, `--no-ext-colors`, `--header`,
+`--no-header`, `--no-pager`, `--where`.
 
 The group column is off by default because it almost always repeats the owner
 name. `-g` turns it on. Same choice eza makes. `--icons`, `--no-icons` and
@@ -47,8 +49,9 @@ Each column has its own macro so they can be told apart:
 | `KF_DAY` | day number | `34` blue |
 | `KF_MONTH` | month | `94` light blue |
 | `KF_TIME` | time of day | `37` white |
-| `KF_GIT_CLEAN` | git column when `--` | `2` |
-| `KF_GIT_DIRTY` | git column otherwise | empty |
+| `KF_AGE` | commit age, replaces the date trio under `-G` | `KF_TIME` |
+| `KF_GIT_MSG` | commit subject, clean entry | `KF_SIZE`, i.e. the size column's ink |
+| `KF_GIT_DIRTY` | commit subject, changed entry | `32` green |
 | `KF_TREE` | tree branches | `2` |
 | `KF_TOTAL` | summary row | empty |
 | `KF_CLOCK` | clock in the summary row | `34` blue |
@@ -61,14 +64,16 @@ so `rwxr-xr-x` reads as a pattern instead of a blob.
 | Macro | Character | Default |
 |---|---|---|
 | `KF_P_DASH` | `-` | `30` black |
-| `KF_P_DIR` | `d` | `90` gray |
 | `KF_P_READ` | `r` | empty, normal foreground |
 | `KF_P_WRITE` | `w` | `37` white |
 | `KF_P_EXEC` | `x` | `94` light blue |
-| `KF_P_OTHER` | `l p s c b` | `90` gray |
+| `KF_P_OTHER` | anything else | `90` gray |
 
-`KF_P_OTHER` covers the type characters for symlink, fifo, socket and devices,
-which would otherwise fall through uncolored.
+The field is nine characters, not ten: the leading type character that `ls`
+prints is left out, so the first visible column of a listing lines up with the
+header line above it. Directories and symlinks are already told apart by name
+color, and a link also carries its `-> target`, so the `d` and `l` were paying
+for a column they did not need.
 
 Note that `30` (black) and `90` (gray) can sit close to the background in dark
 themes. That is deliberate here — the dashes in `-rw-r--r--` are meant to
@@ -126,11 +131,16 @@ under the size column, current time under the time column. The other fields
 are left blank.
 
 Alignment is achieved by printing the same field widths as `longline()` but
-with empty strings — `%10s %3s %-8s` for permissions, link count and owner,
-plus another `%-8s` when `-g` is on. Then `%8s` for the total and `%2s %3s`
-for day and month, so the clock lands exactly under the time field. If
-`longline()` ever changes a field width, `footer()` has to follow; they do not
-share a format string.
+with empty strings — `%9s %3s %-8s` for permissions, link count and owner,
+skipped entirely under `--short`, plus another `%-8s` when `-g` is on, and
+`msgw + 1` in front of all of it when `-G` is on, or nothing at all when
+`msgw` came out zero. Then `%8s` for the total, and for the date either
+`%2s %3s` under the day and month or, when `-G` replaced those with the age
+column, `KF_AGE_WIDTH - 5` spaces — either way the clock ends on the same edge
+as the field above it.
+
+If `longline()` ever changes a field width, `footer()` has to follow; they do
+not share a format string.
 
 The total is `st_size` summed over the listed entries — not disk allocation,
 and not recursive into subdirectories. A directory entry contributes its own
@@ -350,12 +360,34 @@ run.
 
 ## Git
 
-`-G` / `--git` adds a two-character column before the file name in long mode.
+`-G` / `--git` starts every long-mode line with one field: the subject of the
+last commit that touched the entry, and the permissions, link count and owner
+make room for it.
 
-`gitload()` runs git twice per directory: `rev-parse --show-prefix` to get the
-directory's position relative to the repo root, and `status --porcelain -z`
-for the status itself. The prefix is needed because `--porcelain` always
-reports paths from the root.
+Whether that happens is decided per directory, not once at startup. `gitload()`
+sets `gitok` from `--show-toplevel`; `main()` turns that into `gitcol` for the
+listing it is about to print, and `shortfmt` is `o_short || gitcol`. Outside a
+work tree `-G` therefore costs one failed `rev-parse` and changes nothing else
+— no blank column, and the permissions it would have displaced stay. Listing a
+repo and a plain directory in one command gives each the treatment it deserves.
+An explicit `-S` sets `o_short` and survives regardless.
+
+Status has no column of its own. `gitstat()` is still consulted, but only to
+pick the ink: `KF_GIT_DIRTY` when the porcelain pair is anything other than
+`--`, `KF_GIT_MSG` otherwise. A dirty tree is then a handful of green lines,
+which is what the eye is looking for anyway.
+
+What that gives up is the kind of change. `M`, `D`, `R` and `A` all come out
+the same green, and an untracked file has no subject to paint, so it reads
+like a file that was never committed — which, as far as `git log` is
+concerned, it is. `git status` remains the place to go for detail.
+
+`gitload()` runs git twice per directory: `rev-parse --show-prefix
+--show-toplevel` to get the directory's position relative to the repo root
+plus the repo's own name, and `status --porcelain -z` for the status itself.
+The prefix is needed because `--porcelain` always reports paths from the root.
+The toplevel rides along in the same invocation only to spare a third fork;
+its basename is what `msgload()` strips off the front of a subject.
 
 `-z` is mandatory, not an optimization. Without it git quotes names containing
 non-ASCII using C syntax — `spårad.txt` becomes `"sp\303\245rad.txt"` — and
@@ -368,6 +400,68 @@ first path component, i.e. the directory entry in the listing. First match
 wins, so a directory with several changed files shows the first status rather
 than any kind of merge. `R` and `C` consume an extra record because git sends
 the origin path separately.
+
+`msgload()` fetches the commit subjects with a third invocation: `log
+--relative --format=%x01%ct%x02%s --name-only -- .`, one walk for the whole
+directory. The `%ct` costs nothing over `%s` alone — it is the same walk, a few
+more bytes down the pipe — and it is what the age column is built from. `\001` in the format marks the subject lines so they cannot be
+confused with a path, and `-c core.quotePath=false` keeps non-ASCII names
+unquoted the way `-z` does for the status. Every path is reduced to its first
+component, and the first commit that mentions a component wins, so a
+directory inherits the last commit touching anything beneath it.
+
+A subject that opens with the repo's own name and a colon — `kd: color file
+names by extension` — loses that prefix. In a repo whose commits all carry the
+same component prefix it would otherwise eat a quarter of the column while
+repeating what the header already says.
+
+The walk stops as soon as every entry in the listing has a subject, which
+makes an active directory nearly free. An entry nobody has committed — an
+untracked or ignored file — never resolves, so that early exit never fires
+and the walk runs to the root of history. On llama.cpp, 9550 commits and 76
+entries, that is about half a second.
+
+`msgfit()` decides how wide the column gets, as the smallest of three: the
+`KF_MSG_WIDTH` ceiling, the longest subject actually present, and `termcols`
+minus the fixed fields minus the longest name. The content cap is the one that
+is easy to forget — without it a repo whose subjects run to 37 characters
+still gets a 45-wide column, and the eight spaces of padding read as a gap
+between the text and the size. Only the terminal cap is clamped to
+`KF_MSG_MIN`; a short subject is allowed to give a short column. Subjects are
+measured with `utf8w()`, names with `strlen()` via `dispname()`, which is also
+what `-W` needs.
+
+The overhead is spelled out as a sum in the function rather than as one
+number, because it changes with `--short` and `-g` and the next person to add
+a column will miss a bare 25. Piped output skips only the terminal cap.
+
+A directory where nothing is committed yields `msgw == 0`, and both
+`longline()` and `footer()` then omit the field and its separating space
+rather than printing an empty column.
+
+Names are measured with `dispname()`, not `strlen(e->name)`, so `-W` and its
+absolute paths are accounted for.
+
+`agestr()` turns a timestamp into `3 weeks ago`. The unit table is walked
+until the age no longer reaches the next threshold; the divisor is the previous
+row and the label the current one, which is why `second` sits in the table
+without ever being printed. One day reads `yesterday`, under a minute `just
+now`, and a timestamp in the future — clock skew, a checkout from a machine
+running ahead — also lands on `just now` rather than a negative count.
+
+Under `-G` this replaces the day/month/time trio, on the reasoning that in a
+repo you want to know when the content last changed, not when the file was
+written to disk. An entry with no commit falls back to its own mtime through
+the same formatter, so an untracked file still says something. `KF_AGE_WIDTH`
+is 14, the width of the longest phrasing (`59 minutes ago`), and `footer()`
+right-aligns its clock to the same edge.
+
+`fitmsg()` pads or cuts the subject to the width `msgfit()` settled on. It counts
+characters rather than bytes, treating any byte that is not a UTF-8
+continuation byte as one column, so a subject full of `åäö` is cut at
+`KF_MSG_WIDTH` columns rather than that many bytes, and never splits a
+character in half. Wide East Asian
+characters still count as one, the same approximation `columns()` makes.
 
 Reading `.git` directly would be the right approach if performance mattered,
 but it needs zlib, index v2 parsing and tree diffing. Running git is a

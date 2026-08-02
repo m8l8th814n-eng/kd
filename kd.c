@@ -23,7 +23,7 @@
 static int o_long, o_all, o_bytes, o_dironly, o_tree, o_group, o_color, o_one, o_git,
 	   o_showgrp, o_lscolors = KF_USE_LS_COLORS, o_more, o_tty, termcols = 80,
 	   termrows = 24, o_nopager, o_abs,
-	   o_extcolors = KF_USE_EXT_COLORS, o_header = KF_USE_HEADER;
+	   o_extcolors = KF_USE_EXT_COLORS, o_header = KF_USE_HEADER, o_short;
 
 static char curdir[4096], curcwd[4096];
 
@@ -44,6 +44,10 @@ struct gitent {
 
 static struct gitent *gits;
 static size_t ngits;
+static char gitrepo[256];
+static int gitok;	/* the listed directory is inside a work tree */
+static int gitcol;	/* ...and so the subject column is being printed */
+static int shortfmt;	/* -S, or -G having taken the space */
 
 static void die(const char *m)
 {
@@ -207,7 +211,6 @@ static void putperms(const char *m)
 		ch[1] = 0;
 		switch (m[i]) {
 		case '-': paint(KF_P_DASH, ch); break;
-		case 'd': paint(KF_P_DIR, ch); break;
 		case 'r': paint(KF_P_READ, ch); break;
 		case 'w': paint(KF_P_WRITE, ch); break;
 		case 'x': paint(KF_P_EXEC, ch); break;
@@ -253,11 +256,9 @@ static void modestr(mode_t m, char *o)
 	const char *rwx = "rwxrwxrwx";
 	int i;
 
-	o[0] = S_ISDIR(m) ? 'd' : S_ISLNK(m) ? 'l' : S_ISFIFO(m) ? 'p' :
-	       S_ISSOCK(m) ? 's' : S_ISCHR(m) ? 'c' : S_ISBLK(m) ? 'b' : '-';
 	for (i = 0; i < 9; i++)
-		o[i + 1] = (m & (1 << (8 - i))) ? rwx[i] : '-';
-	o[10] = 0;
+		o[i] = (m & (1 << (8 - i))) ? rwx[i] : '-';
+	o[9] = 0;
 }
 
 static void hsize(off_t b, char *o)
@@ -402,26 +403,38 @@ static void gitclose(FILE *f)
 
 static void gitload(const char *path)
 {
-	char *av1[] = { "git", "-C", NULL, "rev-parse", "--show-prefix", NULL };
+	char *av1[] = { "git", "-C", NULL, "rev-parse", "--show-prefix",
+			"--show-toplevel", NULL };
 	char *av2[] = { "git", "-C", NULL, "status", "--porcelain", "-z", NULL };
-	char pfx[4096], xy[3], *buf, *p, *rel, *slash;
+	char pfx[4096], top[4096], xy[3], *buf, *p, *rel, *slash;
 	FILE *f;
 	size_t len = 0, cap = 1 << 16, plen, rl;
 	int c;
 	char x;
 
 	gitfree();
+	gitok = 0;
 	av1[2] = (char *)path;
 	av2[2] = (char *)path;
 	pfx[0] = 0;
+	top[0] = 0;
+	gitrepo[0] = 0;
 	f = gitopen(av1);
 	if (!f)
 		return;
 	if (!fgets(pfx, sizeof pfx, f))
 		pfx[0] = 0;
+	if (!fgets(top, sizeof top, f))
+		top[0] = 0;
 	gitclose(f);
 	pfx[strcspn(pfx, "\n")] = 0;
 	plen = strlen(pfx);
+	top[strcspn(top, "\n")] = 0;
+	gitok = top[0] == '/';
+	if (!gitok)
+		return;		/* not a work tree; asking for status is pointless */
+	slash = strrchr(top, '/');
+	snprintf(gitrepo, sizeof gitrepo, "%s", slash ? slash + 1 : top);
 
 	f = gitopen(av2);
 	if (!f)
@@ -475,6 +488,191 @@ static const char *gitstat(const char *name)
 		if (!strcmp(gits[i].name, name))
 			return gits[i].xy;
 	return "--";
+}
+
+struct msgent {
+	const char *name;
+	char *msg;
+	time_t when;
+};
+
+static struct msgent *msgs;
+static size_t nmsgs;
+
+static void msgfree(void)
+{
+	size_t i;
+
+	for (i = 0; i < nmsgs; i++)
+		free(msgs[i].msg);
+	free(msgs);
+	msgs = NULL;
+	nmsgs = 0;
+}
+
+/* Subject of the last commit that touched each entry, the way a github
+ * directory listing shows it. One log walk for the whole directory, cut
+ * short as soon as every entry has an answer.
+ */
+static void msgload(const char *path, struct ent *v, size_t n)
+{
+	char *av[] = { "git", "-C", NULL, "-c", "core.quotePath=false", "log",
+		       "--relative", "--format=%x01%ct%x02%s", "--name-only",
+		       "--", ".", NULL };
+	char line[8192], subj[512], *slash, *s, *sep;
+	size_t i, left = n, rl = strlen(gitrepo);
+	time_t when = 0;
+	FILE *f;
+
+	msgfree();
+	if (!n)
+		return;
+	msgs = calloc(n, sizeof *msgs);
+	if (!msgs)
+		die("out of memory");
+	for (i = 0; i < n; i++)
+		msgs[i].name = v[i].name;
+	nmsgs = n;
+
+	av[2] = (char *)path;
+	f = gitopen(av);
+	if (!f)
+		return;
+	subj[0] = 0;
+	while (left && fgets(line, sizeof line, f)) {
+		line[strcspn(line, "\n")] = 0;
+		if (line[0] == '\1') {
+			s = line + 1;
+			sep = strchr(s, '\2');
+			if (!sep)
+				continue;
+			*sep = 0;
+			when = (time_t)strtoll(s, NULL, 10);
+			s = sep + 1;
+			/* "kd: color file names" — the repo name is already in
+			 * the header, so it only costs width here.
+			 */
+			if (rl && !strncmp(s, gitrepo, rl) && s[rl] == ':') {
+				s += rl + 1;
+				while (*s == ' ')
+					s++;
+			}
+			snprintf(subj, sizeof subj, "%s", s);
+			continue;
+		}
+		if (!line[0])
+			continue;
+		slash = strchr(line, '/');
+		if (slash)
+			*slash = 0;
+		for (i = 0; i < n; i++)
+			if (!msgs[i].msg && !strcmp(msgs[i].name, line)) {
+				msgs[i].msg = strdup(subj);
+				msgs[i].when = when;
+				left--;
+				break;
+			}
+	}
+	gitclose(f);
+}
+
+static const char *gitmsg(const char *name)
+{
+	size_t i;
+
+	for (i = 0; i < nmsgs; i++)
+		if (!strcmp(msgs[i].name, name))
+			return msgs[i].msg ? msgs[i].msg : "";
+	return "";
+}
+
+static time_t gitwhen(const char *name)
+{
+	size_t i;
+
+	for (i = 0; i < nmsgs; i++)
+		if (!strcmp(msgs[i].name, name))
+			return msgs[i].when;
+	return 0;
+}
+
+/* "3 days ago", the way a github listing dates a file. */
+static void agestr(time_t t, char *o, size_t sz)
+{
+	static const struct {
+		long secs;
+		const char *unit;
+	} step[] = {
+		{ 60,		"second" },
+		{ 3600,		"minute" },
+		{ 86400,	"hour" },
+		{ 7 * 86400,	"day" },
+		{ 30 * 86400,	"week" },
+		{ 365 * 86400,	"month" },
+		{ 0,		"year" },
+	};
+	long d = (long)(time(NULL) - t), n;
+	size_t i;
+
+	if (d < 60) {
+		snprintf(o, sz, "just now");
+		return;
+	}
+	for (i = 1; step[i].secs && d >= step[i].secs; i++)
+		;
+	n = d / step[i - 1].secs;
+	if (!strcmp(step[i].unit, "day") && n == 1) {
+		snprintf(o, sz, "yesterday");
+		return;
+	}
+	snprintf(o, sz, "%ld %s%s ago", n, step[i].unit, n == 1 ? "" : "s");
+}
+
+/* Copy s into o padded to w columns, cut with an ellipsis if it does not
+ * fit. Counts characters, not bytes, so UTF-8 subjects keep their width
+ * and never break mid-character.
+ */
+/* Columns, not bytes: a UTF-8 continuation byte takes no width of its own.
+ * Wide East Asian characters still count as one, as everywhere else here.
+ */
+static size_t utf8w(const char *s)
+{
+	const unsigned char *p = (const unsigned char *)s;
+	size_t n = 0;
+
+	for (; *p; p++)
+		if ((*p & 0xC0) != 0x80)
+			n++;
+	return n;
+}
+
+static void fitmsg(const char *s, char *o, size_t sz, size_t w)
+{
+	size_t k = 0, used = 0, lim, cut = strlen(KF_MSG_CUT);
+	const unsigned char *p;
+	int trunc = 0;
+
+	trunc = utf8w(s) > w;
+	lim = trunc ? w - 1 : w;
+
+	p = (const unsigned char *)s;
+	used = 0;
+	while (*p && used < lim && k + cut + 2 < sz) {
+		o[k++] = (char)*p++;
+		while ((*p & 0xC0) == 0x80 && k + cut + 2 < sz)
+			o[k++] = (char)*p++;
+		used++;
+	}
+	if (trunc) {
+		memcpy(o + k, KF_MSG_CUT, cut);
+		k += cut;
+		used++;
+	}
+	while (used < w && k + 1 < sz) {
+		o[k++] = ' ';
+		used++;
+	}
+	o[k] = 0;
 }
 
 static void normpath(char *p)
@@ -595,8 +793,8 @@ static void header(const char *path)
 		url[0] = 0;
 	}
 
-	need = strlen(disp) + 2 + (url[0] ? strlen(url) + 3 : 0) +
-	       (br[0] ? strlen(br) + 3 : 0);
+	need = strlen(disp) + (url[0] ? strlen(url) + 1 : 0) +
+	       (br[0] ? strlen(br) + 1 : 0);
 	if (need > (size_t)termcols && url[0]) {
 		p = strchr(url, '/');
 		if (p) {
@@ -605,21 +803,19 @@ static void header(const char *path)
 		}
 	}
 	if (need > (size_t)termcols && url[0]) {
-		need -= strlen(url) + 3;
+		need -= strlen(url) + 1;
 		url[0] = 0;
 	}
 	if (need > (size_t)termcols && br[0])
 		br[0] = 0;
 
-	paint(KF_HEAD_BRACKET, "[");
 	paint(KF_HEAD_PATH, disp);
-	paint(KF_HEAD_BRACKET, "]");
 	if (url[0]) {
-		paint(KF_HEAD_SEP, " · ");
+		paint(KF_HEAD_SEP, KF_HEAD_JOIN);
 		paint(KF_HEAD_REMOTE, url);
 	}
 	if (br[0]) {
-		paint(KF_HEAD_SEP, " · ");
+		paint(KF_HEAD_SEP, KF_HEAD_JOIN);
 		paint(KF_HEAD_BRANCH, br);
 	}
 	endline();
@@ -681,10 +877,49 @@ static void putlink(const struct ent *e)
 	paint(stat(path, &st) ? KF_BROKEN : KF_TARGET, tgt);
 }
 
+static size_t msgw = KF_MSG_WIDTH;
+
+/* KF_MSG_WIDTH is a ceiling, not a promise. Everything in longline() except
+ * the subject and the name is a known width, so the subject can give back
+ * whatever the longest name needs rather than pushing the line off screen.
+ */
+static void msgfit(struct ent *v, size_t n)
+{
+	const size_t fixed = 1	/* the space after the subject */
+			   + 9	/* size */
+			   + KF_AGE_WIDTH + 1;	/* commit age */
+	char b[KDPATH];
+	size_t i, l, name = 0, subj = 0, over, avail;
+
+	for (i = 0; i < n; i++) {
+		dispname(&v[i], b, sizeof b);
+		l = strlen(b);
+		if (l > name)
+			name = l;
+		l = utf8w(gitmsg(v[i].name));
+		if (l > subj)
+			subj = l;
+	}
+
+	/* Never wider than the longest subject actually present: padding out
+	 * to the ceiling would push the size column away from text that is
+	 * not there.
+	 */
+	msgw = subj < KF_MSG_WIDTH ? subj : KF_MSG_WIDTH;
+	if (!o_tty || !msgw)
+		return;
+	over = fixed + name + (shortfmt ? 0 : 23) + (o_showgrp ? 9 : 0);
+	avail = over < (size_t)termcols ? (size_t)termcols - over : 0;
+	if (avail < msgw)
+		msgw = avail > KF_MSG_MIN ? avail : KF_MSG_MIN;
+}
+
 static void longline(const struct ent *e)
 {
-	char m[11], sz[32], day[8], mon[16], tim[16], buf[64];
+	char m[10], sz[32], day[8], mon[16], tim[16], buf[64];
+	char msg[KF_MSG_WIDTH * 4 + 8], age[32];
 	const char *g;
+	time_t t;
 	struct passwd *pw;
 	struct group *gr;
 	struct tm *tm;
@@ -698,26 +933,39 @@ static void longline(const struct ent *e)
 	strftime(mon, sizeof mon, "%b", tm);
 	strftime(tim, sizeof tim, "%H:%M", tm);
 
-	putperms(m);
-	snprintf(buf, sizeof buf, " %3lu ", (unsigned long)e->st.st_nlink);
-	paint(KF_NLINK, buf);
-	snprintf(buf, sizeof buf, "%-8s ", pw ? pw->pw_name : "?");
-	paint(KF_USER, buf);
+	if (gitcol && msgw) {
+		g = gitstat(e->name);
+		fitmsg(gitmsg(e->name), msg, sizeof msg, msgw);
+		paint(strcmp(g, "--") ? KF_GIT_DIRTY : KF_GIT_MSG, msg);
+		putchar(' ');
+	}
+	if (!shortfmt) {
+		putperms(m);
+		snprintf(buf, sizeof buf, " %3lu ", (unsigned long)e->st.st_nlink);
+		paint(KF_NLINK, buf);
+		snprintf(buf, sizeof buf, "%-8s ", pw ? pw->pw_name : "?");
+		paint(KF_USER, buf);
+	}
 	if (o_showgrp) {
 		snprintf(buf, sizeof buf, "%-8s ", gr ? gr->gr_name : "?");
 		paint(KF_GROUP, buf);
 	}
 	snprintf(buf, sizeof buf, "%8s ", sz);
 	paint(KF_SIZE, buf);
-	paint(KF_DAY, day);
-	putchar(' ');
-	paint(KF_MONTH, mon);
-	putchar(' ');
-	paint(KF_TIME, tim);
-	putchar(' ');
-	if (o_git) {
-		g = gitstat(e->name);
-		paint(strcmp(g, "--") ? KF_GIT_DIRTY : KF_GIT_CLEAN, g);
+	if (gitcol) {
+		/* When git is telling the story, date the entry by its last
+		 * commit rather than by its mtime, the way github does.
+		 */
+		t = gitwhen(e->name);
+		agestr(t ? t : e->st.st_mtime, age, sizeof age);
+		snprintf(buf, sizeof buf, "%*s ", KF_AGE_WIDTH, age);
+		paint(KF_AGE, buf);
+	} else {
+		paint(KF_DAY, day);
+		putchar(' ');
+		paint(KF_MONTH, mon);
+		putchar(' ');
+		paint(KF_TIME, tim);
 		putchar(' ');
 	}
 	putname(e);
@@ -736,12 +984,18 @@ static void footer(off_t total)
 	tm = localtime(&now);
 	strftime(clk, sizeof clk, "%H:%M", tm);
 
-	printf("%10s %3s %-8s ", "", "", "");
+	if (gitcol && msgw)
+		printf("%*s ", (int)msgw, "");
+	if (!shortfmt)
+		printf("%9s %3s %-8s ", "", "", "");
 	if (o_showgrp)
 		printf("%-8s ", "");
 	snprintf(buf, sizeof buf, "%8s ", sz);
 	paint(KF_TOTAL, buf);
-	printf("%2s %3s ", "", "");
+	if (gitcol)
+		printf("%*s", KF_AGE_WIDTH - 5, "");
+	else
+		printf("%2s %3s ", "", "");
 	paint(KF_CLOCK, clk);
 	endline();
 }
@@ -871,6 +1125,8 @@ static void longopt(char *a)
 		o_extcolors = 1;
 	else if (kl == 13 && !strncmp(k, "no-ext-colors", 13))
 		o_extcolors = 0;
+	else if (kl == 5 && !strncmp(k, "short", 5))
+		o_short = o_long = 1;
 	else if (kl == 6 && !strncmp(k, "header", 6))
 		o_header = 1;
 	else if (kl == 9 && !strncmp(k, "no-header", 9))
@@ -929,6 +1185,8 @@ int main(int argc, char **argv)
 				case 'D': o_dironly = 1; break;
 				case 'g': o_showgrp = 1; break;
 				case 'm': o_more = 1; break;
+				case 's':
+				case 'S': o_short = o_long = 1; break;
 				case 'W': o_abs = 1; break;
 				case 'G': o_git = 1; break;
 				case 'T': o_tree = 1; break;
@@ -983,11 +1241,22 @@ int main(int argc, char **argv)
 			pgauto = 1;
 			pginit();
 		}
-		if (o_git && o_long)
+		gitcol = 0;
+		if (o_git && o_long) {
 			gitload(paths[i]);
+			gitcol = gitok;
+			if (gitcol)
+				msgload(paths[i], v, n);
+		}
+		/* Outside a work tree -G has nothing to show, so it does not
+		 * get to spend the permissions column either.
+		 */
+		shortfmt = o_short || gitcol;
 		if (o_long) {
 			pgtotal = n + 1 + (size_t)hdr;
 			pgline = 0;
+			if (gitcol)
+				msgfit(v, n);
 			if (hdr)
 				header(paths[i]);
 			total = 0;

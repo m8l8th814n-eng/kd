@@ -28,6 +28,12 @@ is equivalent to
 .B \-l
 Long format: permissions, link count, owner, size, timestamp, name. The
 listing opens with a header line and closes with a summary row.
+.IP
+The permission field is nine characters. The leading type character of
+.BR ls (1)
+is not printed, so the listing lines up with the header. Directories and
+symlinks are distinguished by name color, and a symlink also shows its
+target.
 .TP
 .BR \-a ", " \-A
 Include entries whose names begin with a dot.
@@ -42,7 +48,18 @@ List directories only.
 Show the group column. Off by default, as it usually repeats the owner.
 .TP
 .BR \-G ", " \-\-git
-Add a two-character git status column. Long format only.
+Begin each line with the subject of the last commit that touched the entry,
+the way a github directory listing reads, green where the entry has changed
+since. Implies
+.BR \-\-short .
+Long format only. See
+.B GIT
+below.
+.TP
+.BR \-s ", " \-S ", " \-\-short
+Long format without permissions, link count and owner: size, timestamp and
+name only. Implies
+.BR \-l .
 .TP
 .B \-m
 Page the output. See
@@ -112,14 +129,14 @@ A decimal is shown only when the mantissa is below 100.
 Long format opens with a header line: the absolute path of the directory
 being listed, as
 .BR pwd (1)
-would report it, bracketed and set apart by color, followed by the origin
-remote and the current branch when the directory is inside a git work tree.
-The path is abbreviated to
+would report it, followed by the origin remote and the current branch when
+the directory is inside a git work tree. The three are joined by colons and
+set apart by color. The path is abbreviated to
 .B ~
 under the home directory.
 .PP
 .EX
-[~/kd] \(bu github.com/user/kd \(bu main
+~/kd:github.com/user/kd:main
 .EE
 .PP
 The remote is reduced to host, owner and repository, so both
@@ -143,6 +160,71 @@ once or twice per listing; use
 to avoid that, or to keep the output of
 .B \-l
 purely tabular.
+.SH GIT
+.B \-G
+opens every line of a long listing with the subject of the last commit that
+touched the entry, and drops permissions, link count and owner to pay for it.
+.PP
+.EX
+open long listings with a header line     8.6K     1 hour ago kd.1
+directory lister in plain C               101K   19 hours ago kd2.png
+                                            18       just now new.txt
+.EE
+.PP
+The subject is cut with an ellipsis where it does not fit. A leading
+.I reponame:
+is stripped, the repo already being named in the header. A directory carries
+the subject of the last commit touching anything beneath it, and an entry that
+has never been committed leaves the field blank.
+.PP
+Status is carried by color rather than by a column of its own. An entry that
+.B "git status"
+reports as changed has its subject painted
+.BR KF_GIT_DIRTY ,
+everything else
+.BR KF_GIT_MSG .
+The kind of change is not distinguished: modified, deleted and renamed read
+alike, and an untracked file has no subject to color, so it looks like
+anything else that was never committed.
+.PP
+.B KF_MSG_WIDTH
+is a ceiling, not a fixed width. The column is the smallest of three numbers:
+that ceiling, the longest subject in the listing, and whatever the terminal
+has left once every other field and the longest name have taken their space.
+It is therefore never padded past its own text, and never crowds the columns
+behind it. Cramped, it stops at
+.BR KF_MSG_MIN ;
+in a directory where nothing has been committed it vanishes entirely.
+.PP
+The timestamp changes meaning as well. Under
+.B \-G
+it is the age of that last commit, phrased as github phrases it \(em
+.BR "just now" ,
+.BR yesterday ,
+.BR "3 weeks ago" ,
+.B "2 years ago"
+\(em rather than the file's mtime. An entry git knows nothing about falls back
+to its mtime in the same phrasing, so the column answers one question
+throughout. Without
+.B \-G
+the timestamp is the mtime, unchanged.
+.PP
+Outside a work tree
+.B \-G
+does nothing at all: no empty subject column, and the permissions, link count
+and owner it would have displaced stay where they are. The decision is made
+per directory, so
+.B "kd \-lG repo /tmp"
+gives subjects for the one and an ordinary long listing for the other. An
+explicit
+.B \-\-short
+is still honored either way.
+.PP
+The subjects come from a single
+.BR "git log" ,
+stopped as soon as every entry has an answer. A directory whose entries were
+all touched recently costs almost nothing; one holding a file untouched for
+thousands of commits makes the walk go that far back.
 .SH SUMMARY ROW
 Long format ends with a summary line: the total size of the listed entries
 under the size column, and the current time under the timestamp column.

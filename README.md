@@ -1,4 +1,5 @@
 # kd like eza but without mess.
+![](./kd3.png)
 
 ![](./kd.png)
 ![](./kd2.png)
@@ -38,7 +39,8 @@ found the build stops rather than quietly using the system libc.
 kd              # columns, like ls
 kd -l           # long
 kd -la          # long, including dotfiles
-kd -lG          # long with a git status column
+kd -S           # long, without permissions, link count and owner
+kd -lG          # long with git status and commit subjects
 kd -T           # tree
 kd -lW          # long, showing full paths
 ```
@@ -57,19 +59,68 @@ and 1.2 GB as `1.2G`.
 in.
 
 ```
-[~/kd] · github.com/user/kd · main
+~/kd:github.com/user/kd:main
 ```
 
 The path is what `pwd` would print, shortened to `~` under your home
-directory, in purple inside green brackets. The remote is reduced to host, owner and repo, so
-`git@github.com:user/kd.git` and `https://github.com/user/kd.git` both read
-alike. A detached HEAD shows the short hash as `@8b5b306` instead of a branch
-name. Outside a work tree the line is just the path.
+directory, in purple, with green colons between the three fields. The remote
+is reduced to host, owner and repo, so `git@github.com:user/kd.git` and
+`https://github.com/user/kd.git` both read alike. A detached HEAD shows the
+short hash as `@8b5b306` instead of a branch name. Outside a work tree the
+line is just the path.
 
 When the terminal is too narrow, the line gives up its least useful part
 first: the host, then the whole remote, then the branch. The path is never
 shortened. This costs one or two `git` invocations per long listing;
 `--no-header` skips both.
+
+**`-G` reads like a github listing**: every line opens with the subject of the
+last commit that touched the entry.
+
+```
+open long listings with a header line     8.6K     1 hour ago kd.1   <- green
+directory lister in plain C               101K   19 hours ago kd2.png
+                                            18       just now new.txt
+```
+
+There is no status column. An entry that `git status` reports as dirty gets
+its subject in `KF_GIT_DIRTY` instead of the usual ink, so uncommitted work
+shows up as green lines rather than as letters to decode. What that costs is
+the kind of change: modified, deleted and renamed all read the same, and an
+untracked file has no subject to color, so it looks like anything else never
+committed. A leading
+`reponame:` is dropped from the subject, since the repo name is already in the
+header. A directory shows the last commit touching anything beneath it;
+something never committed leaves the subject blank.
+
+`KF_MSG_WIDTH` is a ceiling rather than a fixed width — 45 by default. Before
+printing, kd knows the terminal width, the longest name in the listing and the
+longest subject in it, and takes the smallest of the three. So the column is
+never padded out past the text it holds, and never pushes the size column off
+the screen. Subjects that still do not fit are cut with an ellipsis, so the
+columns behind it stand still either way. Cramped, it stops shrinking at
+`KF_MSG_MIN`; in a directory where nothing has been committed it disappears
+altogether.
+
+The timestamp changes meaning under `-G`. Instead of the file's mtime it
+shows how long ago the last commit touched it, written the way github writes
+it: `just now`, `yesterday`, `3 weeks ago`, `2 years ago`. An entry git knows
+nothing about falls back to its mtime in the same phrasing, so the column
+always answers the same question. Without `-G` the timestamp is the plain
+mtime it has always been.
+
+`-G` also drops permissions, link count and owner, on the grounds that the
+subject is worth more than the space it takes. Outside a work tree it does
+nothing at all — no empty column, and the permissions stay. That is decided
+per directory, so `kd -lG repo /tmp` gives subjects for the one and a normal
+long listing for the other; an explicit `-S` still applies to both.
+
+The subjects and their dates come from one `git log` that stops as soon as
+every entry has an answer, so this is cheap in an active directory and slower
+in one holding a file nobody has touched for thousands of commits.
+
+**`-s` (or `-S`, or `--short`) trims the long format**: no permissions, no
+link count, no owner — just size, time and name. It implies `-l`.
 
 **Long mode ends with a summary row**: the total size of everything listed,
 under the size column, and the current time under the time column.
