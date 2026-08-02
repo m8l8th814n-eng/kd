@@ -82,6 +82,9 @@ Take file name colors from the
 .B LS_COLORS
 environment variable, or do not. Off by default.
 .TP
+.BR \-\-ext\-colors ", " \-\-no\-ext\-colors
+Color file names by extension, or do not. On by default.
+.TP
 .B \-\-no\-pager
 Never page automatically.
 .PP
@@ -143,12 +146,25 @@ is the intended way to change the palette.
 Colors stay within the base ANSI range, which resolves through the terminal
 palette, so the active theme determines the actual shades. Permissions are
 colored per character and the timestamp is split into day, month and time.
+.PP
+Regular files with no other distinguishing trait are colored by extension.
+Extensions are grouped into families \(em archives, images, video, audio,
+documents, source code, structured data, markup, keys and certificates, and
+build or backup leftovers \(em each with one macro in
+.IR kf.h ,
+so a whole family retints in a single edit. The
+.B KF_EXTENSIONS
+table maps extensions to families and is matched without regard to case.
+File type and the executable bit take precedence, so an executable
+.B .sh
+is colored as an executable.
 .SH ENVIRONMENT
 .TP
 .B LS_COLORS
 Consulted for file name colors only when
 .B \-\-ls\-colors
-is given. Metadata columns always use the compiled-in palette.
+is given, and it takes precedence over the built-in extension table where it
+has a matching entry. Metadata columns always use the compiled-in palette.
 .TP
 .B LC_COLLATE
 Determines sort order where the C library supports collation. A musl build

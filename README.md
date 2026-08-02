@@ -83,8 +83,17 @@ palette, so the active theme decides the actual shades. Fields are separately
 addressable: permissions are colored per character, and the date is split into
 day, month and time.
 
+Regular files are colored by extension. Extensions are grouped into families —
+archives, images, video, audio, documents, source code, structured data,
+markup, keys and certificates, and build or backup leftovers — each family a
+single macro, so retinting all archives is one edit. The `KF_EXTENSIONS` table
+holds the mapping and matches without regard to case, so `.PNG` and `.png`
+land alike. File type and the executable bit win first: an executable `.sh` is
+colored as an executable, not as source. `--no-ext-colors` turns this off.
+
 `LS_COLORS` is off by default and applies to file names only when enabled with
-`--ls-colors`. Metadata columns always come from `kf.h`.
+`--ls-colors`, where it overrides the built-in table for extensions it names.
+Metadata columns always come from `kf.h`.
 
 ## License
 

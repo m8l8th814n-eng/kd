@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <dirent.h>
 #include <sys/stat.h>
 #include <sys/ioctl.h>
@@ -21,7 +22,8 @@
 
 static int o_long, o_all, o_bytes, o_dironly, o_tree, o_group, o_color, o_one, o_git,
 	   o_showgrp, o_lscolors = KF_USE_LS_COLORS, o_more, o_tty, termcols = 80,
-	   termrows = 24, o_nopager, o_abs;
+	   termrows = 24, o_nopager, o_abs,
+	   o_extcolors = KF_USE_EXT_COLORS;
 
 static char curdir[4096], curcwd[4096];
 
@@ -86,6 +88,21 @@ static const char *lookup(const char *key)
 	return NULL;
 }
 
+static const struct {
+	const char *ext;
+	const char *col;
+} extcols[] = { KF_EXTENSIONS };
+
+static const char *extcolor(const char *ext)
+{
+	size_t i;
+
+	for (i = 0; i < sizeof extcols / sizeof *extcols; i++)
+		if (!strcasecmp(ext, extcols[i].ext))
+			return extcols[i].col;
+	return NULL;
+}
+
 static const char *themed(const char *key, const char *def)
 {
 	const char *c;
@@ -113,11 +130,16 @@ static const char *color(const struct ent *e)
 		return themed("bd", KF_DEV);
 	if (e->st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH))
 		return themed("ex", KF_EXEC);
-	if (o_lscolors) {
-		d = strrchr(e->name, '.');
-		if (d && d != e->name) {
+	d = strrchr(e->name, '.');
+	if (d && d != e->name && d[1]) {
+		if (o_lscolors) {
 			snprintf(key, sizeof key, "*%s", d);
 			c = lookup(key);
+			if (c)
+				return c;
+		}
+		if (o_extcolors) {
+			c = extcolor(d + 1);
 			if (c)
 				return c;
 		}
@@ -732,6 +754,10 @@ static void longopt(char *a)
 		o_lscolors = 1;
 	else if (kl == 12 && !strncmp(k, "no-ls-colors", 12))
 		o_lscolors = 0;
+	else if (kl == 10 && !strncmp(k, "ext-colors", 10))
+		o_extcolors = 1;
+	else if (kl == 13 && !strncmp(k, "no-ext-colors", 13))
+		o_extcolors = 0;
 	else if (kl == 5 && !strncmp(k, "color", 5))
 		o_color = when(v);
 	else if (kl == 23 && !strncmp(k, "group-directories-first", 23))
