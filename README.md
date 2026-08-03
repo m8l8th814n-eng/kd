@@ -23,6 +23,11 @@ Install with either Makefile:
 ```sh
 sudo make install                                   # /usr/local by default
 make install DESTDIR="$pkgdir" PREFIX=/usr          # for packaging
+alias ls="kd -lG"
+alias l="kd -lGa"
+alias ll="kd -la"
+or
+sudo cp kd /bin/ls
 ```
 
 This installs the binary and the `kd.1` man page. `make uninstall` removes
