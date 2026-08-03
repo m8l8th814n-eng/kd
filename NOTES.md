@@ -512,25 +512,51 @@ would otherwise be counted as executables.
 In `--ls-colors` mode `cd` and `bd` respectively are looked up first, the same
 keys ls uses.
 
-## Makefile.musl
+## configure
 
-A separate Makefile for musl builds. `ARCH` selects the target and defaults to
-`uname -m`, so `make -f Makefile.musl` builds for the host and
-`make -f Makefile.musl ARCH=aarch64` for arm64.
+Takes no options; it finds what it needs and prints what it finds. Compiler:
+`$CC`, then clang, then gcc, then cc. Which libc that compiler targets is asked
+of the preprocessor, not guessed from its name — no `__GLIBC__` means musl, and
+then `LDFLAGS = -static`. That is what Makefile.musl was for, so it is gone.
+`CC="zig cc -target aarch64-linux-musl" ./configure` still cross-compiles.
 
-The compiler is picked automatically in descending order: `musl-gcc` when the
-target is the host architecture, otherwise `<arch>-linux-musl-gcc`, otherwise
-clang with a sysroot, otherwise `zig cc -target <arch>-linux-musl`. If none
-exists the build stops with a readable error instead of silently falling back
-to the system libc.
+The probe strips line markers and joins the output first: gcc breaks the line
+before a macro that came from a system header, so `__GLIBC__` does not stay
+next to the word it was written beside.
 
-`zig` is in the chain because it ships musl sources for every target
-architecture and can therefore cross-compile without an installed cross
-toolchain. On this machine `musl-gcc` exists but `aarch64-linux-musl-gcc` does
-not, so arm64 goes through zig.
+The generated file is `makefile`, small m, which GNU make and BSD make both
+read before `Makefile`. `-include` and `ifeq` are GNU-only, so a config
+fragment could never have worked on BSD or Minix. Where `makefile` and
+`Makefile` are the same file, configure writes `GNUmakefile` — macOS wants that
+anyway. The case test creates a file and looks for it under the other case
+rather than asking `uname`.
 
-`-static` is the default. For packaging against Alpine's system musl you
-probably want to set `LDFLAGS=` empty instead.
+awk generates it *from* `Makefile`, so the rules live in one place. If the
+Makefile stops matching what awk substitutes into, configure removes the
+half-made file instead of leaving one that ignores the configuration.
+`install -Dm755` was GNU-only and is now `mkdir -p` plus `install -m 755`.
+
+## Where kd becomes ls
+
+Every `ls` on `$PATH` is classified as kd or not: same inode as a known kd, or
+a symlink chain ending in a file named kd, or a binary containing
+`--ls-colors`, which GNU ls has no reason to contain.
+
+The first non-kd one becomes `LSPRE` in the makefile, and `LSPOST` is that plus
+`.og`. `make install` moves the real ls aside and links kd in its place;
+`make uninstall` moves it back. PATH order is then irrelevant — kd holds the
+name itself.
+
+configure never touches ls, only decides. The four cases in the recipe matter:
+under `DESTDIR` nothing happens at all, so packaging cannot displace the build
+host's ls. A symlink or a missing `LSPRE` is relinked without a move, since
+there is nothing there worth keeping. An existing `LSPOST` means the move
+already happened once, and the recipe stops rather than overwriting the backup
+— that is the case after a coreutils update has restored a real `ls`, and
+overwriting there would destroy the only original. Otherwise: move, then link.
+
+`uninstall` restores only when `readlink LSPRE` is the kd it installed, so
+someone else's ls is never moved on top of.
 
 `gcc` warns about `-Wformat-truncation` in `dispname()` where three components
 are written into an 8192 buffer. It is `snprintf`, i.e. truncation rather than

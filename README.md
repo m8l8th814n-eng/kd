@@ -13,12 +13,10 @@ toolchain, and to be small enough to read in one sitting.
 ## Build
 
 ```sh
-make                                  # clang, glibc
-make -f Makefile.musl                 # musl, static, host arch
-make -f Makefile.musl ARCH=aarch64    # musl, static, arm64
+./configure && make                   # clang, glibc
+CC=musl-gcc ./configure && make       # musl, static, host arch
+CC="zig cc -target aarch64-linux-musl" ./configure && make    # musl, static, arm64
 ```
-
-Install with either Makefile:
 
 ```sh
 sudo make install                                   # /usr/local by default
@@ -31,12 +29,7 @@ sudo cp kd /bin/ls
 ```
 
 This installs the binary and the `kd.1` man page. `make uninstall` removes
-both.
-
-The musl Makefile picks a toolchain by itself: `musl-gcc` for the host,
-`<arch>-linux-musl-gcc` if installed, otherwise `zig cc`, which can
-cross-compile against musl without a separate cross toolchain. If none is
-found the build stops rather than quietly using the system libc.
+both, and moves `ls` back.
 
 ## Usage
 
@@ -48,6 +41,8 @@ kd -S           # long, without permissions, link count and owner
 kd -lG          # long with git status and commit subjects
 kd -T           # tree
 kd -lW          # long, showing full paths
+kd --crazy      # glyphs, file types, disk usage bars
+kd --crazy-git  # the same with the git columns
 ```
 
 Short flags cluster, so `-laG` works. `-h` is accepted and does nothing —
@@ -60,23 +55,26 @@ are accepted and ignored so that aliases copied from eza keep working.
 which hold until 10000. So 1.5 MB reads as `1500K`, half a gigabyte as `500M`,
 and 1.2 GB as `1.2G`.
 
-**Long mode opens with a header row**: where you are, and which repo you are
-in.
+**Long mode opens with the repo** and closes with the path.
 
 ```
-~/kd:github.com/user/kd:main
+github.com/user/kd main
+rw-r--r--   1 you    7.1K  3 Aug 11:54 README.md
+~/kd                 310K       13:45
 ```
+
+The remote is reduced to host, owner and repo, so `git@github.com:user/kd.git`
+and `https://github.com/user/kd.git` both read alike. A detached HEAD shows
+the short hash as `@8b5b306` instead of a branch name. Outside a work tree
+there is no header line at all.
 
 The path is what `pwd` would print, shortened to `~` under your home
-directory, in purple, with green colons between the three fields. The remote
-is reduced to host, owner and repo, so `git@github.com:user/kd.git` and
-`https://github.com/user/kd.git` both read alike. A detached HEAD shows the
-short hash as `@8b5b306` instead of a branch name. Outside a work tree the
-line is just the path.
+directory, and it rides in the empty columns ahead of the total, so it costs
+no line of its own. A path too long for that room is cut from the left:
+`/usr/share/fastfetch/presets/examples` becomes `..fetch/presets/examples`.
 
-When the terminal is too narrow, the line gives up its least useful part
-first: the host, then the whole remote, then the branch. The path is never
-shortened. This costs one or two `git` invocations per long listing;
+When the terminal is too narrow, the header gives up the host first, then the
+whole remote. This costs one or two `git` invocations per long listing;
 `--no-header` skips both.
 
 **`-G` reads like a github listing**: every line opens with the subject of the
