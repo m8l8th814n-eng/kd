@@ -23,7 +23,10 @@
 static int o_long, o_all, o_bytes, o_dironly, o_tree, o_group, o_color, o_one, o_git,
 	   o_showgrp, o_lscolors = KF_USE_LS_COLORS, o_more, o_tty, termcols = 80,
 	   termrows = 24, o_nopager, o_abs,
-	   o_extcolors = KF_USE_EXT_COLORS, o_header = KF_USE_HEADER, o_short;
+	   o_extcolors = KF_USE_EXT_COLORS, o_header = KF_USE_HEADER, o_short,
+	   o_crazy;
+
+static off_t crazymax;
 
 static char curdir[4096], curcwd[4096];
 
@@ -95,6 +98,8 @@ static const char *lookup(const char *key)
 static const struct {
 	const char *ext;
 	const char *col;
+	const char *ic;
+	const char *ty;
 } extcols[] = { KF_EXTENSIONS };
 
 static const char *extcolor(const char *ext)
@@ -105,6 +110,16 @@ static const char *extcolor(const char *ext)
 		if (!strcasecmp(ext, extcols[i].ext))
 			return extcols[i].col;
 	return NULL;
+}
+
+static size_t extfind(const char *ext)
+{
+	size_t i;
+
+	for (i = 0; i < sizeof extcols / sizeof *extcols; i++)
+		if (!strcasecmp(ext, extcols[i].ext))
+			return i + 1;
+	return 0;
 }
 
 static const char *themed(const char *key, const char *def)
@@ -149,6 +164,51 @@ static const char *color(const struct ent *e)
 		}
 	}
 	return themed("fi", KF_FILE);
+}
+
+/* The lookup color() does, answering with the glyph or the family name
+ * instead of the color. --crazy is the only caller.
+ */
+static const char *fam(const struct ent *e, int name)
+{
+	const char *d;
+	size_t i;
+
+	if (S_ISLNK(e->st.st_mode))
+		return name ? "link" : KF_I_LINK;
+	if (S_ISDIR(e->st.st_mode))
+		return name ? "dir" : KF_I_DIR;
+	if (S_ISCHR(e->st.st_mode) || S_ISBLK(e->st.st_mode))
+		return name ? "dev" : KF_I_DEV;
+	if (e->st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH))
+		return name ? "exec" : KF_I_EXEC;
+	d = strrchr(e->name, '.');
+	if (d && d != e->name && d[1]) {
+		i = extfind(d + 1);
+		if (i)
+			return name ? extcols[i - 1].ty : extcols[i - 1].ic;
+	}
+	return name ? "file" : KF_I_FILE;
+}
+
+/* A foreground code turned into its background twin: 31 lights up as 41,
+ * 95 as 105. Anything else falls back to a plain grey block.
+ */
+static const char *bgof(const char *fg)
+{
+	static char b[16];
+	const char *p;
+	int n;
+
+	p = fg && *fg ? strrchr(fg, ';') : NULL;
+	p = p ? p + 1 : (fg && *fg ? fg : "37");
+	n = atoi(p);
+	if ((n >= 30 && n <= 37) || (n >= 90 && n <= 97))
+		n += 10;
+	else
+		n = 47;
+	snprintf(b, sizeof b, "%d", n);
+	return b;
 }
 
 static void pgrestore(void)
@@ -628,6 +688,25 @@ static void agestr(time_t t, char *o, size_t sz)
 	snprintf(o, sz, "%ld %s%s ago", n, step[i].unit, n == 1 ? "" : "s");
 }
 
+/* "43 minutes ago" right-aligned, the count in one color and the words in
+ * another. Everything agestr() writes is ASCII, so bytes are columns here.
+ */
+static void putage(const char *age)
+{
+	size_t n = strspn(age, "0123456789");
+	char num[16];
+	int pad = KF_AGE_WIDTH - (int)strlen(age);
+
+	if (pad > 0)
+		printf("%*s", pad, "");
+	if (n) {
+		snprintf(num, sizeof num, "%.*s", (int)n, age);
+		paint(KF_AGE_NUM, num);
+	}
+	paint(KF_AGE, age + n);
+	putchar(' ');
+}
+
 /* Copy s into o padded to w columns, cut with an ellipsis if it does not
  * fit. Counts characters, not bytes, so UTF-8 subjects keep their width
  * and never break mid-character.
@@ -644,6 +723,28 @@ static size_t utf8w(const char *s)
 		if ((*p & 0xC0) != 0x80)
 			n++;
 	return n;
+}
+
+/* Trim from the left, the way a prompt does: the tail of a path carries
+ * more than its root, so /usr/share/fastfetch/presets/examples becomes
+ * ..fetch/presets/examples. Cuts on columns, never mid-character.
+ */
+static void cutleft(char *s, size_t w)
+{
+	unsigned char *p = (unsigned char *)s;
+	size_t skip;
+
+	if (utf8w(s) <= w || w < 3)
+		return;
+	skip = utf8w(s) - (w - 2);
+	while (skip && *p) {
+		p++;
+		while ((*p & 0xC0) == 0x80)
+			p++;
+		skip--;
+	}
+	memmove(s + 2, p, strlen((char *)p) + 1);
+	s[0] = s[1] = '.';
 }
 
 static void fitmsg(const char *s, char *o, size_t sz, size_t w)
@@ -759,17 +860,12 @@ static void shorturl(char *u)
 		u[l - 4] = 0;
 }
 
-/* Where you are, which repo it is, and which branch — one line, trimmed
- * from the least useful end when the terminal is too narrow to hold it.
- */
-static void header(const char *path)
+/* Where you are, with $HOME written as ~ the way a prompt would. */
+static void curpath(const char *path, char *out, size_t sz)
 {
-	char *avbr[] = { "git", "-C", NULL, "symbolic-ref", "--short", "HEAD", NULL };
-	char *avsha[] = { "git", "-C", NULL, "rev-parse", "--short", "HEAD", NULL };
-	char *avurl[] = { "git", "-C", NULL, "config", "--get", "remote.origin.url", NULL };
-	char abs[KDPATH], url[512], br[128], sha[64], *disp = abs, *p;
+	char abs[KDPATH], *disp = abs;
 	const char *home;
-	size_t hl, need;
+	size_t hl;
 
 	abspath(path, abs, sizeof abs);
 	home = getenv("HOME");
@@ -782,6 +878,20 @@ static void header(const char *path)
 			disp = abs + hl - 1;
 		}
 	}
+	snprintf(out, sz, "%s", disp);
+}
+
+/* Which repo it is and which branch — one line, trimmed from the least
+ * useful end when the terminal is too narrow to hold it. The path itself
+ * sits in the footer, next to the clock.
+ */
+static void header(const char *path)
+{
+	char *avbr[] = { "git", "-C", NULL, "symbolic-ref", "--short", "HEAD", NULL };
+	char *avsha[] = { "git", "-C", NULL, "rev-parse", "--short", "HEAD", NULL };
+	char *avurl[] = { "git", "-C", NULL, "config", "--get", "remote.origin.url", NULL };
+	char url[512], br[128], sha[64], *p;
+	size_t need;
 
 	avbr[2] = avsha[2] = avurl[2] = (char *)path;
 	if (!gitcmd(avbr, br, sizeof br) && gitcmd(avsha, sha, sizeof sha))
@@ -793,8 +903,7 @@ static void header(const char *path)
 		url[0] = 0;
 	}
 
-	need = strlen(disp) + (url[0] ? strlen(url) + 1 : 0) +
-	       (br[0] ? strlen(br) + 1 : 0);
+	need = (url[0] ? strlen(url) : 0) + (br[0] ? strlen(br) + 2 : 0);
 	if (need > (size_t)termcols && url[0]) {
 		p = strchr(url, '/');
 		if (p) {
@@ -806,17 +915,14 @@ static void header(const char *path)
 		need -= strlen(url) + 1;
 		url[0] = 0;
 	}
-	if (need > (size_t)termcols && br[0])
-		br[0] = 0;
-
-	paint(KF_HEAD_PATH, disp);
-	if (url[0]) {
-		paint(KF_HEAD_SEP, KF_HEAD_JOIN);
-		paint(KF_HEAD_REMOTE, url);
-	}
+	if (!url[0] && !br[0])
+		return;
+	if (url[0])
+		paint(o_crazy ? KF_CRAZY_HEAD : KF_HEAD_REMOTE, url);
 	if (br[0]) {
-		paint(KF_HEAD_SEP, KF_HEAD_JOIN);
-		paint(KF_HEAD_BRANCH, br);
+		if (url[0])
+			putchar(' ');
+		paint(o_crazy ? KF_CRAZY_HEAD : KF_HEAD_BRANCH, br);
 	}
 	endline();
 }
@@ -849,11 +955,58 @@ static void dispname(const struct ent *e, char *out, size_t sz)
 	}
 }
 
+/* What --crazy adds ahead of the name: the glyph, what kind of file it is,
+ * what it actually costs on disk, and a bar of that against the greediest
+ * entry in the listing. st_blocks is what the filesystem spent, which is
+ * not the size a sparse or tiny file reports.
+ */
+static void putcrazy(const struct ent *e)
+{
+	char buf[128], du[32];
+	off_t used = (off_t)e->st.st_blocks * 512;
+	int n, i;
+
+	paint(color(e), fam(e, 0));
+	putchar(' ');
+	snprintf(buf, sizeof buf, "%-7s ", fam(e, 1));
+	paint(KF_CRAZY_TYPE, buf);
+	hsize(used, du);
+	snprintf(buf, sizeof buf, "%7s ", du);
+	paint(KF_CRAZY_DISK, buf);
+
+	n = crazymax > 0 ? (int)((used * KF_CRAZY_BARW + crazymax - 1) / crazymax) : 0;
+	if (n > KF_CRAZY_BARW)
+		n = KF_CRAZY_BARW;
+	buf[0] = 0;
+	for (i = 0; i < n; i++)
+		strncat(buf, KF_CRAZY_BAR, sizeof buf - strlen(buf) - 1);
+	paint(n * 3 <= KF_CRAZY_BARW ? KF_CRAZY_LOW :
+	      n * 3 <= KF_CRAZY_BARW * 2 ? KF_CRAZY_MID : KF_CRAZY_HIGH, buf);
+	printf("%*s ", KF_CRAZY_BARW - n, "");
+}
+
+static void crazyfit(const struct ent *v, size_t n)
+{
+	size_t i;
+
+	crazymax = 0;
+	for (i = 0; i < n; i++)
+		if ((off_t)v[i].st.st_blocks * 512 > crazymax)
+			crazymax = (off_t)v[i].st.st_blocks * 512;
+}
+
 static void putname(const struct ent *e)
 {
-	char full[KDPATH];
+	char full[KDPATH], c[64];
 
 	dispname(e, full, sizeof full);
+	if (o_crazy) {
+		snprintf(c, sizeof c, "%s;%s", KF_CRAZY_TEXT, bgof(color(e)));
+		putchar(' ');
+		paint(c, full);
+		putchar(' ');
+		return;
+	}
 	paint(color(e), full);
 }
 
@@ -958,8 +1111,7 @@ static void longline(const struct ent *e)
 		 */
 		t = gitwhen(e->name);
 		agestr(t ? t : e->st.st_mtime, age, sizeof age);
-		snprintf(buf, sizeof buf, "%*s ", KF_AGE_WIDTH, age);
-		paint(KF_AGE, buf);
+		putage(age);
 	} else {
 		paint(KF_DAY, day);
 		putchar(' ');
@@ -968,14 +1120,21 @@ static void longline(const struct ent *e)
 		paint(KF_TIME, tim);
 		putchar(' ');
 	}
+	if (o_crazy)
+		putcrazy(e);
 	putname(e);
 	putlink(e);
 	endline();
 }
 
-static void footer(off_t total)
+/* Total size and the time of day, opened by the path the listing is of:
+ * the columns before the size are empty here, so the path lives there
+ * rather than costing a line of its own.
+ */
+static void footer(off_t total, const char *path)
 {
-	char sz[32], clk[16], buf[64];
+	char sz[32], clk[16], buf[64], cwd[KDPATH];
+	int lead = 0;
 	time_t now;
 	struct tm *tm;
 
@@ -984,12 +1143,21 @@ static void footer(off_t total)
 	tm = localtime(&now);
 	strftime(clk, sizeof clk, "%H:%M", tm);
 
+	curpath(path, cwd, sizeof cwd);
 	if (gitcol && msgw)
-		printf("%*s ", (int)msgw, "");
+		lead += (int)msgw + 1;
 	if (!shortfmt)
-		printf("%9s %3s %-8s ", "", "", "");
+		lead += 23;
 	if (o_showgrp)
-		printf("%-8s ", "");
+		lead += 9;
+
+	if (lead > 3) {
+		cutleft(cwd, (size_t)lead - 1);
+		paint(KF_HEAD_PATH, cwd);
+		printf("%*s", lead - (int)utf8w(cwd), "");
+	} else {
+		printf("%*s", lead, "");
+	}
 	snprintf(buf, sizeof buf, "%8s ", sz);
 	paint(KF_TOTAL, buf);
 	if (gitcol)
@@ -1135,6 +1303,10 @@ static void longopt(char *a)
 		o_color = when(v);
 	else if (kl == 23 && !strncmp(k, "group-directories-first", 23))
 		o_group = 1;
+	else if (kl == 5 && !strncmp(k, "crazy", 5))
+		o_crazy = o_long = 1;
+	else if (kl == 9 && !strncmp(k, "crazy-git", 9))
+		o_crazy = o_long = o_git = 1;
 	else if (kl == 5 && !strncmp(k, "icons", 5))
 		return;
 	else if (kl == 8 && !strncmp(k, "no-icons", 8))
@@ -1257,6 +1429,8 @@ int main(int argc, char **argv)
 			pgline = 0;
 			if (gitcol)
 				msgfit(v, n);
+			if (o_crazy)
+				crazyfit(v, n);
 			if (hdr)
 				header(paths[i]);
 			total = 0;
@@ -1264,7 +1438,7 @@ int main(int argc, char **argv)
 				longline(&v[j]);
 				total += v[j].st.st_size;
 			}
-			footer(total);
+			footer(total, paths[i]);
 		} else
 			columns(v, n);
 		for (j = 0; j < n; j++)

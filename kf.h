@@ -15,7 +15,7 @@
 #define KF_MONTH	"94"
 #define KF_TIME		"37"
 #define KF_TREE		"2"
-#define KF_TOTAL	""
+#define KF_TOTAL	"34"
 #define KF_CLOCK	"34"
 #define KF_PROMPT	"1;33"
 #define KF_PERCENT	"1;97"
@@ -28,14 +28,13 @@
 #define KF_MSG_WIDTH	45
 #define KF_MSG_MIN	8
 #define KF_MSG_CUT	"…"
-#define KF_AGE		KF_TIME
+#define KF_AGE		KF_MONTH
+#define KF_AGE_NUM	KF_DAY
 #define KF_AGE_WIDTH	14
 
 #define KF_HEAD_PATH	"35"
 #define KF_HEAD_REMOTE	"36"
 #define KF_HEAD_BRANCH	"32"
-#define KF_HEAD_SEP	"32"
-#define KF_HEAD_JOIN	":"
 #define KF_HEAD_DETACH	"@"
 
 #define KF_DIR		"01;34"
@@ -51,19 +50,48 @@
 #define KF_USE_EXT_COLORS 1
 #define KF_USE_HEADER 1
 
-/* Colors by file format. One macro per family, so retheming a whole
- * family is a single edit.
+/* Nerd font glyphs, private use area. Only --crazy prints them, so a
+ * terminal without the font is never asked to draw one.
  */
-#define KF_X_ARCHIVE	"31"
-#define KF_X_IMAGE	"35"
-#define KF_X_VIDEO	"95"
-#define KF_X_AUDIO	"36"
-#define KF_X_DOC	"33"
-#define KF_X_CODE	"32"
-#define KF_X_DATA	"93"
-#define KF_X_MARKUP	"37"
-#define KF_X_KEY	"91"
-#define KF_X_JUNK	"90"
+#define KF_I_DIR	""
+#define KF_I_LINK	""
+#define KF_I_EXEC	""
+#define KF_I_DEV	""
+#define KF_I_FILE	""
+#define KF_I_ARCHIVE	""
+#define KF_I_IMAGE	""
+#define KF_I_VIDEO	""
+#define KF_I_AUDIO	""
+#define KF_I_DOC	""
+#define KF_I_CODE	""
+#define KF_I_DATA	""
+#define KF_I_MARKUP	""
+#define KF_I_KEY	""
+#define KF_I_JUNK	""
+
+#define KF_CRAZY_TEXT	"1;30"
+#define KF_CRAZY_HEAD	"1;97;45"
+#define KF_CRAZY_TYPE	"2;37"
+#define KF_CRAZY_DISK	"96"
+#define KF_CRAZY_BAR	"█"
+#define KF_CRAZY_BARW	8
+#define KF_CRAZY_LOW	"32"
+#define KF_CRAZY_MID	"33"
+#define KF_CRAZY_HIGH	"1;31"
+
+/* Colors by file format, the glyph that goes with each, and what to call
+ * it. One macro per family, so retheming a whole family is a single edit.
+ */
+#define KF_X_ARCHIVE	"31", KF_I_ARCHIVE, "archive"
+#define KF_X_IMAGE	"35", KF_I_IMAGE, "image"
+#define KF_X_VIDEO	"95", KF_I_VIDEO, "video"
+#define KF_X_AUDIO	"36", KF_I_AUDIO, "audio"
+#define KF_X_DOC	"33", KF_I_DOC, "doc"
+#define KF_X_CODE	"32", KF_I_CODE, "code"
+#define KF_X_DATA	"93", KF_I_DATA, "data"
+#define KF_X_MARKUP	"37", KF_I_MARKUP, "markup"
+#define KF_X_KEY	"91", KF_I_KEY, "key"
+#define KF_X_JUNK	"90", KF_I_JUNK, "junk"
 
 /* Extensions are matched without regard to case and without the dot.
  * Order does not matter; the first match wins.
