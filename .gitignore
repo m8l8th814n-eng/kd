@@ -1,2 +1,5 @@
 /kd
 /kd-*
+/config.log
+/makefile
+/GNUmakefile

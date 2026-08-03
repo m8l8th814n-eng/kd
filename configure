@@ -1,0 +1,209 @@
+#!/bin/sh
+
+set -u
+
+srcdir=$(dirname "$0")
+case $srcdir in /*) ;; *) srcdir=$(cd "$srcdir" && pwd) ;; esac
+log=$srcdir/config.log
+fail=0
+warn=0
+
+say() {
+	s=$1; l=$2; shift 2
+	case $s in
+	ok)   m='ok  ' ;;
+	warn) m='warn'; warn=$((warn + 1)) ;;
+	fail) m='FAIL'; fail=$((fail + 1)) ;;
+	*)    m='    ' ;;
+	esac
+	printf '  [%s] %-14s %s\n' "$m" "$l" "$*"
+}
+note() { printf '  %-21s %s\n' '' "$*"; }
+hdr()  { printf '\n%s\n' "$1"; }
+have() { command -v "$1" 2>/dev/null; }
+
+: > "$log"
+
+echo 'configure: kd'
+
+hdr 'system'
+os=$(uname -s)
+uarch=$(uname -m)
+say ok os "$os $(uname -r)"
+if [ -f /etc/os-release ]; then
+	d=$(grep '^PRETTY_NAME=' /etc/os-release | head -n1 | cut -d'"' -f2)
+	[ -n "$d" ] && note "$d"
+fi
+case $uarch in
+x86_64|amd64)  say ok arch "$uarch — amd64" ;;
+aarch64|arm64) say ok arch "$uarch — arm64" ;;
+*)             say warn arch "$uarch — neither" ;;
+esac
+
+hdr 'tools'
+m=$(have make || have gmake)
+[ -n "$m" ] && say ok make "$m" || say fail make 'not found'
+i=$(have install)
+[ -n "$i" ] && say ok install "$i" || say fail install 'not found'
+g=$(have git)
+[ -n "$g" ] && say ok git "$g  ($(git --version 2>/dev/null))" ||
+	say warn git 'not found — kd -G is silent without it, the rest works'
+
+hdr 'compiler'
+cc=; ldflags=
+if [ -n "${CC:-}" ] && p=$(have "${CC%% *}"); then
+	cc=$CC
+	say ok cc "$cc  $p  ($($cc --version 2>/dev/null | head -n1))"
+else
+	for t in clang gcc cc; do
+		p=$(have $t) && { cc=$t; say ok cc "$t  $p  ($($t --version 2>/dev/null | head -n1))"; break; }
+	done
+fi
+[ -n "$cc" ] || say fail cc 'none of clang, gcc, cc found'
+
+if [ -n "$cc" ]; then
+	tgt=$($cc -dumpmachine 2>/dev/null)
+	case $tgt in "$uarch"*|'') ;; *) say '' target "$tgt" ;; esac
+
+	tmp=${TMPDIR:-/tmp}/kdconf.$$
+	printf '#include <stdlib.h>\n#ifdef __GLIBC__\nkd glibc __GLIBC__ __GLIBC_MINOR__\n#else\nkd other\n#endif\n' > "$tmp.c"
+	probe=$($cc -E "$tmp.c" 2>> "$log" | grep -v '^#' | tr '\n' ' ' | tr -s ' ')
+	case $probe in
+	*'kd glibc'*)
+		v=${probe#*kd glibc }
+		v=$(echo "$v" | cut -d' ' -f1,2 | tr ' ' '.')
+		say ok libc "glibc $v — sorting follows LC_COLLATE" ;;
+	*)
+		ldflags=-static
+		say ok libc 'not glibc linking static' ;;
+	esac
+
+	if $cc -O2 -Wall -Wextra $ldflags -o "$tmp.bin" "$srcdir/kd.c" >> "$log" 2>&1; then
+		say ok 'compile kd.c' "$(wc -c < "$tmp.bin" | tr -d ' ') bytes"
+	else
+		say fail 'compile kd.c' 'failed — see config.log'
+	fi
+	rm -f "$tmp.c" "$tmp.bin"
+fi
+
+if [ "$os" = Linux ] && [ -z "$ldflags" ]; then
+	mcc=
+	have musl-gcc >/dev/null && mcc=musl-gcc
+	[ -n "$mcc" ] || { have zig >/dev/null && mcc='zig cc'; }
+	[ -n "$mcc" ] && say ok musl "$mcc found — CC='$mcc' ./configure for a static build"
+fi
+
+hdr 'ls'
+resolve() {
+	t=$1; n=0
+	while [ -L "$t" ] && [ $n -lt 8 ]; do
+		l=$(readlink "$t")
+		case $l in /*) t=$l ;; *) t=$(dirname "$t")/$l ;; esac
+		n=$((n + 1))
+	done
+	echo "$t"
+}
+
+if have whereis >/dev/null; then
+	cand=$(whereis -b ls 2>/dev/null | cut -d' ' -f2-)
+else
+	cand=$(have ls)
+	say '' whereis 'not on this system doing PATH'
+fi
+
+lspre=; lspost=
+for f in $cand; do
+	[ -x "$f" ] && [ ! -d "$f" ] || continue
+	t=$(resolve "$f")
+	if [ "${t##*/}" = kd ]; then
+		note "$f -> kd"
+		continue
+	fi
+	lspre=$f
+	lspost=$f.og
+	say ok 'gnu ls' "$f  ($("$f" --version 2>/dev/null | head -n1))"
+	[ "$t" = "$f" ] || note "symlink to ${t##*/}, moved as a link and restored as one"
+	break
+done
+[ -n "$lspre" ] || say warn 'gnu ls' 'none found that is not already kd'
+
+for rc in "${HOME:-}/.zshrc" "${HOME:-}/.bashrc" "${HOME:-}/.config/fish/config.fish"; do
+	[ -f "$rc" ] || continue
+	a=$(grep '^[ 	]*alias ls[ =]' "$rc" 2>/dev/null | head -n1)
+	[ -n "$a" ] && say ok alias "$a  ($rc)"
+done
+
+hdr 'makefile'
+if [ "$fail" -gt 0 ]; then
+	say fail makefile 'not generated, fix the above first'
+	printf '\nconfigure: %d failed, %d warning(s)\n' "$fail" "$warn"
+	exit 1
+fi
+
+gen=makefile
+: > "$srcdir/.kdcase"
+[ -e "$srcdir/.KDCASE" ] && gen=GNUmakefile
+rm -f "$srcdir/.kdcase"
+
+awk -v cc="$cc" -v ldflags="$ldflags" -v lspre="$lspre" -v lspost="$lspost" '
+	/^CC[ 	]*=/       { print "CC = " cc; next }
+	/^LDFLAGS[ 	]*\?=/ { print ldflags == "" ? "LDFLAGS =" : "LDFLAGS = " ldflags; next }
+	/^MANDIR[ 	]*\?=/ {
+		print
+		if (lspre != "") {
+			print "LSPRE = " lspre
+			print "LSPOST = " lspost
+		}
+		next
+	}
+	/^\tinstall -m 644 kd\.1/ {
+		print
+		if (lspre != "") {
+			print "\t@if [ -n \"$(DESTDIR)\" ]; then :; \\"
+			print "\telif [ \"`readlink $(LSPRE) 2>/dev/null`\" = \"$(BINDIR)/kd\" ]; then echo \"$(LSPRE) is already kd\"; \\"
+			print "\telif [ -e $(LSPOST) ] || [ -L $(LSPOST) ]; then echo \"$(LSPOST) is in the way, $(LSPRE) left alone\"; \\"
+			print "\telif [ -e $(LSPRE) ] || [ -L $(LSPRE) ]; then mv $(LSPRE) $(LSPOST) && ln -s $(BINDIR)/kd $(LSPRE); \\"
+			print "\telse ln -s $(BINDIR)/kd $(LSPRE); fi"
+		}
+		next
+	}
+	/^\trm -f \$\(DESTDIR\)\$\(BINDIR\)\/kd/ {
+		print
+		if (lspre != "") {
+			print "\t@if [ -n \"$(DESTDIR)\" ]; then :; \\"
+			print "\telif [ \"`readlink $(LSPRE) 2>/dev/null`\" = \"$(BINDIR)/kd\" ]; then \\"
+			print "\t\trm -f $(LSPRE); [ -e $(LSPOST) ] && mv $(LSPOST) $(LSPRE) || true; fi"
+		}
+		next
+	}
+	{ print }
+' "$srcdir/Makefile" > "$srcdir/$gen"
+
+miss=
+[ -n "$ldflags" ] && e="LDFLAGS = $ldflags" || e='LDFLAGS ='
+grep -qxF "CC = $cc" "$srcdir/$gen" || miss=' CC'
+grep -qxF "$e" "$srcdir/$gen" || miss="$miss LDFLAGS"
+if [ -n "$lspre" ]; then
+	grep -qxF "LSPRE = $lspre" "$srcdir/$gen" || miss="$miss LSPRE"
+	grep -qF '	elif [ -e $(LSPOST) ]' "$srcdir/$gen" || miss="$miss install"
+	grep -qF '		rm -f $(LSPRE)' "$srcdir/$gen" || miss="$miss uninstall"
+fi
+
+if [ -n "$miss" ]; then
+	say fail "$gen" "err:$miss — Makefile changed"
+	rm -f "$srcdir/$gen"
+	printf '\nconfigure: %d failed, %d warning(s)\n' "$fail" "$warn"
+	exit 1
+fi
+
+say ok "$gen" "written."
+note "$cc -O2 -Wall -Wextra${ldflags:+ $ldflags} -o kd kd.c"
+if [ -n "$lspre" ]; then
+	note "make install   -> $lspre kept as $lspost"
+	note "make uninstall -> $lspost move back"
+else
+	note 'no no no'
+fi
+
+printf '\nconfigure: ok, %d warning(s) do make\n' "$warn"
+exit 0
