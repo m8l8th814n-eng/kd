@@ -1,4 +1,4 @@
-# kd like eza but without mess.
+# kd like eza but without mess. get organized.
 ![](./kd3.png)
 
 ![](./kd.png)
