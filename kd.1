@@ -1,4 +1,4 @@
-.TH KD 1 "2026-08-02" "kd 0.1.5" "User Commands"
+.TH KD 1 "2026-08-03" "kd 0.1.6" "User Commands"
 .SH NAME
 kd \- list directory contents
 .SH SYNOPSIS
@@ -71,6 +71,15 @@ Print full paths instead of bare names.
 .TP
 .BR \-T ", " \-\-tree
 Recursive tree view.
+.TP
+.BR \-\-crazy ", " \-\-crazy\-git
+Long format with everything turned up: a nerd font glyph per entry, the
+family it belongs to, the space it actually occupies on disk with a bar
+against the greediest entry in the listing, and names on a colored block.
+.B \-\-crazy\-git
+is the same with the git columns of
+.BR \-G .
+Needs a nerd font for the glyphs.
 .TP
 .B \-1
 One entry per line.
