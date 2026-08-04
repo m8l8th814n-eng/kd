@@ -14,6 +14,8 @@
 #include <locale.h>
 #include <termios.h>
 #include <fcntl.h>
+#include <poll.h>
+#include <errno.h>
 #include <limits.h>
 #include <sys/wait.h>
 #include "kf.h"
@@ -31,7 +33,16 @@ static off_t crazymax;
 static char curdir[4096], curcwd[4096];
 
 static FILE *pgtty;
-static int pgrows, pgcount, pgauto, spinframe;
+static int pgrows, pgcount, pgauto;
+static int pongpos[KF_PONG_AGES];
+static int pongdir = 1, pongflash, pongside, pongroll, pongtick, pongdashroll;
+static int pongpct;
+static const unsigned pongring[] = KF_PONG_RING;
+static const char *pongfade[] = KF_PONG_HITFADE;
+static const int pongramp[][3] = KF_PONG_RAMP;
+#define PONGRING ((int)(sizeof pongring / sizeof *pongring))
+#define PONGFADE ((int)(sizeof pongfade / sizeof *pongfade))
+#define PONGRAMP ((int)(sizeof pongramp / sizeof *pongramp))
 static size_t pgtotal, pgline;
 static struct termios pgsaved;
 
@@ -248,17 +259,164 @@ static void paint(const char *c, const char *s)
 		fputs(s, stdout);
 }
 
-static void spin(void)
+static int pongrush(void)
 {
-	static const char *cols[] = KF_SPIN_COLORS;
-	const char *frames = KF_SPIN_FRAMES;
-	char f[2];
+	return 100 - (100 - KF_PONG_RUSH) * pongpct / 100;
+}
 
-	printf("\033[%dG", termcols);
-	f[0] = frames[spinframe % (int)strlen(frames)];
-	f[1] = 0;
-	paint(cols[spinframe % (int)(sizeof cols / sizeof *cols)], f);
-	spinframe++;
+static const char *pongtint(int lit, int of)
+{
+	static char b[16];
+	int seg, frac, i, v, q[3];
+
+	seg = pongpct * (PONGRAMP - 1) / 100;
+	frac = pongpct * (PONGRAMP - 1) % 100;
+	if (seg >= PONGRAMP - 1) {
+		seg = PONGRAMP - 2;
+		frac = 100;
+	}
+	for (i = 0; i < 3; i++) {
+		v = pongramp[seg][i] +
+		    (pongramp[seg + 1][i] - pongramp[seg][i]) * frac / 100;
+		v = v * lit / of;
+		q[i] = v * 5 / 255;
+	}
+	snprintf(b, sizeof b, "38;5;%d", 16 + 36 * q[0] + 6 * q[1] + q[2]);
+	return b;
+}
+
+static void braille(unsigned m, char *o)
+{
+	o[0] = (char)0xE2;
+	o[1] = (char)(0xA0 | (m >> 6));
+	o[2] = (char)(0x80 | (m & 0x3F));
+	o[3] = 0;
+}
+
+static void pongstep(int span)
+{
+	int i;
+
+	for (i = KF_PONG_AGES - 1; i > 0; i--)
+		pongpos[i] = pongpos[i - 1];
+	pongroll = (pongroll + pongdir + PONGRING) % PONGRING;
+	if (++pongtick % (KF_PONG_DASH * 100 / pongrush()) == 0)
+		pongdashroll = (pongdashroll + 1) % PONGRING;
+	pongpos[0] += pongdir;
+	if (pongpos[0] < 0) {
+		pongpos[0] = 1;
+		pongdir = 1;
+		pongside = -1;
+		pongflash = PONGFADE;
+	} else if (pongpos[0] >= span) {
+		pongpos[0] = span - 2;
+		pongdir = -1;
+		pongside = 1;
+		pongflash = PONGFADE;
+	} else if (pongflash) {
+		pongflash--;
+	}
+}
+
+static void pongwall(int side, unsigned mask)
+{
+	int lit = pongflash && pongside == side;
+	char c[4];
+
+	braille(lit ? mask : 0, c);
+	paint(lit ? pongfade[PONGFADE - pongflash] : "", c);
+}
+
+static void pong(int col, int w)
+{
+	int span = (w - 2) * 2, i, s, p, a, best;
+	unsigned m;
+	char c[4];
+
+	pongstep(span);
+	printf("\033[%dG", col);
+	pongwall(-1, 0x47);
+	for (i = 0; i < w - 2; i++) {
+		best = -1;
+		for (s = 0; s < 2; s++) {
+			p = i * 2 + s;
+			for (a = 0; a < KF_PONG_AGES; a++)
+				if (pongpos[a] == p)
+					break;
+			if (a < KF_PONG_AGES && (best < 0 || a < best))
+				best = a;
+		}
+		m = best < 0 ? 0 : pongring[(pongroll + best) % PONGRING];
+		braille(m, c);
+		paint(best < 0 ? "" :
+		      pongtint(KF_PONG_AGES - best, KF_PONG_AGES), c);
+	}
+	pongwall(1, 0xB8);
+}
+
+static void pongdash(int pw)
+{
+	char c[4];
+	int i;
+
+	printf("\033[1G");
+	for (i = 0; i < 2; i++) {
+		braille(pongring[(pongdashroll + i) % PONGRING], c);
+		paint(pongtint(1, 1), c);
+	}
+	printf("\033[%dG", pw - 1);
+	for (i = 1; i >= 0; i--) {
+		braille(pongring[(pongdashroll + KF_PONG_DASHSKEW + i)
+				 % PONGRING], c);
+		paint(pongtint(1, 1), c);
+	}
+}
+
+static int pongdelay(int span)
+{
+	int d = pongpos[0], r = KF_PONG_EASE, ms = KF_PONG_MS;
+
+	if (span - 1 - d < d)
+		d = span - 1 - d;
+	if (r > span / 3)
+		r = span / 3;
+	if (r < 1)
+		r = 1;
+	if (d < r)
+		ms += (KF_PONG_MS_SLOW - KF_PONG_MS) *
+		      (r - d) * (r - d) / (r * r);
+	ms = ms * pongrush() / 100;
+	return ms > 0 ? ms : 1;
+}
+
+static int pongwidth(int col)
+{
+	int w = termcols - col;
+
+	if (w > KF_PONG_WIDTH)
+		w = KF_PONG_WIDTH;
+	return w >= KF_PONG_MIN ? w : 0;
+}
+
+static int pongwait(int col, int w, int pw)
+{
+	struct pollfd pf;
+	unsigned char c;
+	int n;
+
+	pf.fd = fileno(pgtty);
+	pf.events = POLLIN;
+	for (;;) {
+		pongdash(pw);
+		pong(col, w);
+		fflush(stdout);
+		n = poll(&pf, 1, pongdelay((w - 2) * 2));
+		if (n > 0)
+			break;
+		if (n < 0 && errno != EINTR)
+			break;
+	}
+	return read(pf.fd, &c, 1) == 1 ? c : EOF;
 }
 
 static void putperms(const char *m)
@@ -282,7 +440,7 @@ static void putperms(const char *m)
 static void endline(void)
 {
 	char pb[16];
-	int c, pct;
+	int c, pct, col, w, pw;
 
 	putchar('\n');
 	pgline++;
@@ -294,16 +452,24 @@ static void endline(void)
 		if (pct > 100)
 			pct = 100;
 		snprintf(pb, sizeof pb, "%d%%", pct);
+		pongpct = pct;
 		paint(KF_PROMPT, "-- ");
 		paint(KF_PERCENT, pb);
 		paint(KF_PROMPT, " --");
+		pw = 3 + (int)strlen(pb) + 3;
 	} else {
 		paint(KF_PROMPT, "-- more --");
+		pongpct = 0;
+		pw = 10;
 	}
-	if (pgauto)
-		spin();
-	fflush(stdout);
-	c = getc(pgtty);
+	col = pw + 1 + KF_PONG_GAP;
+	w = pgauto ? pongwidth(col) : 0;
+	if (w) {
+		c = pongwait(col, w, pw);
+	} else {
+		fflush(stdout);
+		c = getc(pgtty);
+	}
 	fputs("\r\033[K", stdout);
 	if (c == 'q' || c == 'Q' || c == EOF)
 		exit(0);

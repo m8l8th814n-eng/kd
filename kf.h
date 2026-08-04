@@ -20,8 +20,27 @@
 #define KF_PROMPT	"1;33"
 #define KF_PERCENT	"1;97"
 
-#define KF_SPIN_FRAMES	"|/-\\"
-#define KF_SPIN_COLORS	{ "36", "32", "33", "35" }
+#define KF_PONG_WIDTH	56
+#define KF_PONG_MIN	8
+#define KF_PONG_GAP	6
+#define KF_PONG_MS	5
+#define KF_PONG_MS_SLOW	40
+#define KF_PONG_EASE	10
+#define KF_PONG_RUSH	40
+#define KF_PONG_DASH	14
+#define KF_PONG_DASHSKEW 5
+#define KF_PONG_AGES	8
+
+/* grå, grön, lila, blå, vit */
+#define KF_PONG_RAMP	{ { 128, 128, 128 }, { 0, 200, 80 }, \
+			  { 150, 60, 200 }, { 60, 120, 255 }, \
+			  { 255, 255, 255 } }
+#define KF_PONG_HITFADE	{ "1;97", "1;97", "97", "97", "93", \
+			  "93", "33", "33", "2;33", "2;30" }
+
+/* ⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏ */
+#define KF_PONG_RING	{ 0x0B, 0x19, 0x39, 0x38, 0x3C, \
+			  0x34, 0x26, 0x27, 0x07, 0x0F }
 
 #define KF_GIT_DIRTY	"32"
 #define KF_GIT_MSG	KF_SIZE
