@@ -1,4 +1,4 @@
-.TH KD 1 "2026-08-03" "kd 0.1.6" "User Commands"
+.TH KD 1 "2026-08-04" "kd 0.2.0" "User Commands"
 .SH NAME
 kd \- list directory contents
 .SH SYNOPSIS
@@ -243,10 +243,11 @@ The total is the sum of
 over the listed entries. It is not disk allocation and does not descend into
 subdirectories.
 .SH PAGER
-Long format pages itself when the listing does not fit on screen. A spinning
-character at the right edge of the prompt marks that
+Long format pages itself when the listing does not fit on screen. A game of
+pong, drawn in braille beside the prompt, marks that
 .B kd
-made that decision rather than the user.
+made that decision rather than the user. It plays for as long as the prompt
+waits.
 .B \-m
 forces paging,
 .B \-\-no\-pager

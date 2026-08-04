@@ -11,7 +11,7 @@
 
 stdenv.mkDerivation (finalAttrs: {
   pname = "kd";
-  version = "0.1.6";
+  version = "0.2.0";
 
   # Only what the build reads. Screenshots and notes change often and would
   # otherwise cost a rebuild each time.

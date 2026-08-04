@@ -333,26 +333,68 @@ disables the automatic behavior.
 Only long mode is auto-paged. Column mode would require deriving the line
 count from the column layout first, and that is not done.
 
-### The spinner
+### The pong
 
-When the pager was started automatically, a single character is drawn at the
-right edge of the prompt line, so you can see that kd made the decision rather
-than you. With an explicit `-m` it is not shown — telling the two apart is the
-entire point, and `pgauto` is the flag that does it.
+When the pager was started automatically, a game of pong plays beside the
+prompt, so you can see that kd made the decision rather than you. With an
+explicit `-m` nothing is drawn — telling the two apart is the entire point, and
+`pgauto` is the flag that does it.
 
-It is **one** character cell. `\033[<termcols>G` moves the cursor to the right
-edge of the line already written, then one character is drawn. No absolute row
-positioning is involved, so it scrolls along with everything else instead of
-colliding with the listing.
+It is one line, `KF_PONG_GAP` columns right of the prompt and `KF_PONG_WIDTH`
+cells wide, clamped to what is left of `termcols` and skipped below
+`KF_PONG_MIN`. Only the column is addressed, never the row.
 
-Shape and color step per screenful, not per unit of time — it spins as you
-page. Four shapes from `KF_SPIN_FRAMES` and four colors from
-`KF_SPIN_COLORS`; since both have length four they stay in lockstep. Make the
-lists different lengths and you get sixteen combinations instead.
+Time comes from `poll()`, not from paging. The prompt used to block in
+`getc()`; it now redraws on a timeout and reads only once a key is really
+waiting. The read is a raw `read()` on the fd, because stdio can buffer a byte
+that `poll()` would then never report.
 
-The shapes are deliberately ASCII (`|/-\`). Braille and block spinners are
-double-width or missing in some fonts, and a wrong character width would shift
-the right edge.
+Ball and tail are one comet, `KF_PONG_AGES` long, indexed by age into
+`KF_PONG_RING`, which rolls a step a frame in the direction of travel. Drawing
+the ball as `⠆` instead reads as a colon, not a ball.
+
+Color tracks progress, not time. `KF_PONG_RAMP` is five RGB anchors — grey,
+green, purple, blue, white — and `pongtint()` interpolates between them on the
+percentage, then scales by age for the comet's fade and quantizes into the
+256-color cube. So the whole prompt drifts up the ramp as you page toward 100%,
+a step per screenful, and the comet fades within whatever hue it is at.
+
+The cube is the compromise here: interpolation is smooth but lands on 51-step
+channels, so the ramp bands slightly and the oldest ages collapse to black.
+Truecolor (`38;2;R;G;B`) would remove both, at the cost of terminals that do
+not speak it.
+
+A cell is two dots across, so the ball steps half a column and the tail cannot
+break up. Speed is the frame time instead: `KF_PONG_MS_SLOW` at the ends down
+to `KF_PONG_MS` in the middle, squared over `KF_PONG_EASE` half-cells, clamped
+to a third of the court so a narrow one still has a fast middle.
+
+The whole frame time is then scaled by progress, from full at 0% down to
+`KF_PONG_RUSH` percent of it at 100%, so the game winds up as the listing runs
+out. The dash divider is scaled by the same factor in the opposite direction —
+otherwise the dashes ride the rising frame rate and speed up with it. Both
+numbers want headroom above the 1 ms `poll()` floor: at `KF_PONG_MS 2` the
+scaling truncated to 1 ms and the rush only reached the bounce ease.
+
+The prompt's own `--` are redrawn from the same ring, mirrored around the
+percentage, but on their own counter — a step every `KF_PONG_DASH` frames, one
+way only. At the ball's own rate they strobe, and following its direction makes
+them rock back and forth between bounces instead of rolling. The right pair is
+`KF_PONG_DASHSKEW` further round, half the ring, so the two sides never show
+the same glyphs at once — mirroring alone still reads as the same thing twice.
+
+The court is drawn last of all, which leaves the cursor parked at the end of
+the line rather than blinking in the middle of the prompt.
+
+The walls are drawn only while lit — a bounce sets the glow, which walks down
+`KF_PONG_HITFADE` and then stops being drawn at all. Blank cells are `U+2800`,
+not spaces, so nothing shifts as it fades.
+
+An empty cell is a blank braille cell, `U+2800`, not a space. The earlier
+ASCII spinner avoided braille because a font that draws it wide would shift
+the right edge; drawing the whole court out of one Unicode block instead means
+every cell is whatever that font does, uniformly, and the court is a margin
+short of the edge either way.
 
 Row count is read from the same `TIOCGWINSZ` as the column width, once in
 `main()`. Resizing the terminal mid-pagination is not noticed until the next

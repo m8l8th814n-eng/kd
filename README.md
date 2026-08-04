@@ -128,9 +128,10 @@ link count, no owner — just size, time and name. It implies `-l`.
 **Long mode ends with a summary row**: the total size of everything listed,
 under the size column, and the current time under the time column.
 
-**Long mode pages itself** when the listing will not fit on screen. A spinning
-character at the right edge of the prompt marks that kd made that decision
-rather than you. `-m` forces paging; `--no-pager` disables it. The pager is
+**Long mode pages itself** when the listing will not fit on screen. A game of
+pong, drawn in braille beside the prompt, marks that kd made that decision
+rather than you — it plays while the prompt waits, and stops the moment you
+press a key. `-m` forces paging; `--no-pager` disables it. The pager is
 built in — neither `less` nor `more` is required — and color survives it,
 which it does not when piping to an external pager.
 
